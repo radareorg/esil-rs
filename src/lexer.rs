@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 use num::traits::Num;
+use std::collections::VecDeque;
+
 
 
 const ESIL_INTERNAL_PREFIX: char = '$';
@@ -37,6 +39,12 @@ pub enum Token {
     EClear,
     EDup,
     ETrap,
+    // Invalid
+    EInvalid,
+    // Parser Instructions.
+    PCopy(usize),
+    PPop(usize),
+    PSync,
     // Esil Internal Vars
     IZero(u8),
     ICarry(u8),
@@ -49,25 +57,19 @@ pub enum Token {
     // Esil Operands
     EConstant(u64),
     EIdentifier(String),
-    // Invalid
-    EInvalid,
-    // Parser Instructions.
-    PCopy(usize),
-    PPop(usize),
-    PSync,
 }
 
 pub trait Tokenize {
     type Token: Clone + Debug + PartialEq;
-    fn tokenize<T: AsRef<str>>(esil: T) -> Vec<Self::Token>;
+    fn tokenize<T: AsRef<str>>(esil: T) -> VecDeque<Self::Token>;
 }
 
 pub struct Tokenizer;
 
 impl Tokenize for Tokenizer {
     type Token = Token;
-    fn tokenize<T: AsRef<str>>(esil: T) -> Vec<Self::Token> {
-        let mut tokens = Vec::new();
+    fn tokenize<T: AsRef<str>>(esil: T) -> VecDeque<Self::Token> {
+        let mut tokens = VecDeque::new();
         for t in esil.as_ref().split(",").into_iter() {
             tokens.extend(
                 match t {
@@ -276,8 +278,11 @@ impl Tokenize for Tokenizer {
                                 's' => vec![Token::ISign(bit)],
                                 _ => vec![Token::EInvalid],
                             }
-                        } else if let Ok(v) = Num::from_str_radix(t.trim_left_matches("0x"), 16) {
-                            vec![Token::EConstant(v)]
+                        } else if t.starts_with("0x") {
+                            match Num::from_str_radix(t.trim_left_matches("0x"), 16) {
+                                Ok(v) => vec![Token::EConstant(v)],
+                                Err(_) => vec![Token::EInvalid],
+                            }
                         } else if let Ok(v) = t.parse::<u64>() {
                             vec![Token::EConstant(v)]
                         } else {

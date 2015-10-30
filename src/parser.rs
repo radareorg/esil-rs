@@ -1,56 +1,40 @@
 use ::lexer::{Token, Tokenize};
-use std::collections::VecDeque;
+
 use std::fmt::Debug;
+use std::collections::VecDeque;
 use std::collections::HashSet;
 
-pub trait ActionHandler {
-    type InType: Clone + Debug + PartialEq;
-    type OutType: Clone;
-
-    fn init() -> Self;
-    fn evaluate(&mut self, &Self::InType);
-    fn results(&mut self) -> Option<Self::OutType>;
-}
-
-pub struct Parser<T: ActionHandler> {
-    handler: T,
-    old: Option<T::InType>,
-    new: Option<T::InType>,
-    lastsz: usize,
-    stack: Vec<T::InType>,
-    tstack: Vec<T::InType>,
+pub struct Parser {
+    stack: Vec<Token>,
+    tstack: Vec<Token>,
     regset: Option<HashSet<String>>,
-    tokens: Option<VecDeque<T::InType>>
+    tokens: Option<VecDeque<Token>>
 }
 
-// Implementation of the parser where the input type is lexer::Token
-impl<T: ActionHandler<InType=Token>> Parser<T> {
-    pub fn init(regset: Option<HashSet<String>>) -> Parser<T> {
-        let h = T::init();
-        Parser {
-            handler: h,
-            old: None,
-            new: None,
-            lastsz: 0,
-            stack: Vec::new(),
-            tstack: Vec::new(),
-            regset: regset,
-            tokens: None,
-        }
-    }
+pub trait Parse {
+	type InType: Clone + Debug + PartialEq;
+	type OutType: Clone + Debug;
 
-    pub fn parse<S, L>(&mut self, esil: S) -> Option<Token>
-    where S: AsRef<str>, L: Tokenize<Token=Token> {
-        // Mechanism:
-        // The parser takes in a string to parse. Parser uses the lexer to break
-        // up the string into tokens. At this time, it sets esil to be,
-        // Some(Vec<Tokens>).
-        // After the last token has been used up, the vector is empty, when
-        // a request is made to parse again, esil is set to None and None is returned to indicate
-        // end of parse for the string.
+	fn parse<S: AsRef<str>, T: Tokenize<Token = Self::InType>>(&mut self, S) ->
+		Option<Self::OutType>;
+    
+    fn fetch_operands(&mut self, t: &Self::InType) ->
+        (Option<Self::OutType>, Option<Self::OutType>);
 
+	fn push(&mut self, t: Self::InType);
+}
+
+impl Parse for Parser {
+    type InType = Token;
+    type OutType = Token;
+
+	fn parse<S, T>(&mut self, esil: S) -> Option<Self::OutType>
+    where S: AsRef<str>,
+		  T: Tokenize<Token = Self::InType>
+	{
+        // TODO: Add notes about mechanism.
         if self.tokens.is_none() {
-            self.tokens = Some(L::tokenize(esil));
+            self.tokens = Some(T::tokenize(esil));
         }
 
         while let Some(token) = self.tokens.as_mut().unwrap().pop_front() {
@@ -72,12 +56,13 @@ impl<T: ActionHandler<InType=Token>> Parser<T> {
                 // Esil Operands
                 Token::EConstant(_)
                 | Token::EIdentifier(_) => {
-                    self.stack.push(token);
+					self.push(token);
+
                 },
                 // Parser Instructions.
                 Token::PCopy(ref n) => {
-                    // Copy 'n' elements from esil stack onto tstack
-                    // _maintaining_ the order.
+                    // Copy 'n' elements from esil stack onto tstack.
+                    // _Maintains_ order.
                     let len = self.stack.len();
                     if *n > len {
                         panic!("Request to `PCopy` too many elements!");
@@ -85,14 +70,14 @@ impl<T: ActionHandler<InType=Token>> Parser<T> {
                     self.tstack.extend((&self.stack[len-n..]).iter().cloned());
                 },
                 Token::PPop(ref n) => { 
-                    // Pop 'n' elements from esil stack onto tstack
-                    // _maintaining_ the order.
-                    let len = self.stack.len();
+					// Pops 'n' elements from the tstack to the esil stack.
+					// _Maintains_ order
+                    let len = self.tstack.len();
                     if *n > len {
                         panic!("Request to `PPop` too many elements!");
                     }
-                    self.tstack.extend((&self.stack[len-n..]).iter().cloned());
-                    self.stack.truncate(len - n);
+                    self.stack.extend((&self.tstack[len-n..]).iter().cloned());
+                    self.tstack.truncate(len - n);
                 },
                 // Not in use _yet_.
                 Token::PSync => unimplemented!(),
@@ -109,32 +94,12 @@ impl<T: ActionHandler<InType=Token>> Parser<T> {
         None
     }
 
-    fn evaluate_internal(&self, t: &Token) -> VecDeque<Token> {
-		match *t {
-			Token::IZero(_) => { },
-			Token::ICarry(_) => { },
-			Token::IParity(_) => { },
-			Token::IOverflow(_) => { },
-			Token::ISign(_) => { }, 
-			Token::IBorrow(_) => { },
-			Token::ISize(_) => { },
-			_ => unreachable!(),
-		}
-		VecDeque::new()
-    }
-
-    fn pop_op(&mut self) -> Option<Token> {
-		if self.tstack.len() > 0 {
-			self.tstack.pop()
-		} else if self.stack.len() > 0 {
-			self.stack.pop()
-		} else {
-			panic!("Insufficient operands!");
-		}
-    }
+	fn push(&mut self, t: Self::InType) {
+		self.stack.push(t);
+	}
 
     // TODO: Think about changing this to a result type rather than option.
-    pub fn fetch_operands(&mut self, t: &Token) -> (Option<Token>, Option<Token>) {
+    fn fetch_operands(&mut self, t: &Token) -> (Option<Token>, Option<Token>) {
         // Match the operation.
         match *t {
             // Binary.
@@ -183,10 +148,96 @@ impl<T: ActionHandler<InType=Token>> Parser<T> {
     }
 }
 
+// Implementation of the parser where the input type is lexer::Token
+impl Parser {
+    pub fn init(regset: Option<HashSet<String>>) -> Parser {
+        Parser {
+            stack: Vec::new(),
+            tstack: Vec::new(),
+            regset: regset,
+            tokens: None,
+        }
+    }
+
+    fn evaluate_internal(&self, t: &Token) -> VecDeque<Token> {
+		let mut result = VecDeque::new();
+		let genmask = |bit: u8| {
+			// ( 2 << bit ) - 1
+			[Token::EConstant(1), Token::EConstant(bit as u64), Token::EConstant(2),
+			 Token::ELsl, Token::ESub]
+		};
+		match *t {
+			Token::IZero(_) => { 
+				result.extend([Token::ECur, Token::EConstant(0), Token::ECmp].iter().cloned())
+			},
+			Token::ICarry(_bit) => { 
+				let bit = _bit & 0x3F;
+				let x = [Token::PCopy(1), Token::ECur, Token::PPop(1), Token::EAnd,
+				         Token::PPop(1), Token::EOld, Token::PPop(1), Token::EAnd, Token::EGt];
+				result.extend(genmask(bit).iter().cloned());
+				result.extend(x.iter().cloned());
+			},
+			Token::IParity(_) => { 
+				// Parity flag computation as described in:
+				//   - https://graphics.stanford.edu/~seander/bithacks.html#ParityWith64Bits
+				let c1: u64 = 0x0101010101010101;
+				let c2: u64 = 0x8040201008040201;
+				let c3: u64 = 0x1FF;
+				result.extend([Token::EConstant(1), Token::EConstant(c3), Token::EConstant(c2),
+				Token::EConstant(c1), Token::ECur, Token::EMul, Token::EAnd, Token::EMod,
+				Token::EAnd].iter().cloned());
+			},
+			Token::IOverflow(_bit) => { 
+				// XXX: This may be potentially buggy and may have to be replaced by using lastsz
+				// instead of bit (as that is the right thing to do).
+				let carry_in_bit = (_bit - 2) & 0x3F;
+				let carry_out_bit = (_bit - 1) & 0x3F;
+				let x = [Token::PCopy(1), Token::ECur, Token::PPop(1), Token::EAnd,
+				         Token::PPop(1), Token::EOld, Token::PPop(1), Token::EAnd, Token::EGt];
+				result.extend(genmask(carry_in_bit).iter().cloned());
+				result.extend(x.iter().cloned());
+				result.extend(genmask(carry_out_bit).iter().cloned());
+				result.extend(x.iter().cloned());
+				result.extend([Token::EXor].iter().cloned());
+			},
+			Token::ISign(_) => { 
+				result.extend([Token::EConstant(1), Token::EConstant(1), Token::EConstant(0x1F),
+				Token::ECur, Token::ELsr, Token::EAnd, Token::ECmp].iter().cloned());
+			}, 
+			Token::IBorrow(_bit) => { 
+				let bit = ((_bit & 0x3F) + 0x3F) & 0x3F;
+				let x = [Token::PCopy(1), Token::ECur, Token::PPop(1), Token::EAnd,
+				         Token::PPop(1), Token::EOld, Token::PPop(1), Token::EAnd, Token::ELt];
+				result.extend(genmask(bit).iter().cloned());
+				result.extend(x.iter().cloned());
+			},
+			Token::ISize(_) => { 
+				result.push_front(Token::EConstant(64));
+			},
+			Token::IAddress(_) => {
+				result.push_front(Token::EAddress);
+			},
+			_ => unreachable!(),
+		}
+		result
+    }
+
+    fn pop_op(&mut self) -> Option<Token> {
+		if self.stack.len() > 0 {
+			self.stack.pop()
+		} else {
+			panic!("Insufficient operands!");
+		}
+    }
+
+
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use ::lexer::*;
+	use ::evaluator::*;
 
     struct Evaluator;
     impl ActionHandler for Evaluator {

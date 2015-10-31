@@ -56,13 +56,13 @@ pub enum Token {
     // Esil Operands
     EConstant(u64),
     EIdentifier(String),
-	// Meta-variables
-	// These are not emmitted by the lexer, but is used by the parser to communicate special
-	// variables to the `Evaluator`.
-	EOld,
-	ECur,
-	ELastsz,
-	EAddress,
+    // Meta-variables
+    // These are not emmitted by the lexer, but is used by the parser to communicate special
+    // variables to the `Evaluator`.
+    EOld,
+    ECur,
+    ELastsz,
+    EAddress,
 }
 
 pub trait Tokenize {
@@ -294,7 +294,7 @@ impl Tokenize for Tokenizer {
                     "DUP" => vec![Token::EDup],
                     "TRAP" => vec![Token::ETrap],
                     _   => {
-                        // Handle internal vars
+            // Handle internal vars
                         if Some(ESIL_INTERNAL_PREFIX) == t.chars().nth(0) {
                             let bit = if t.len() < 3 {
                                 DEFAULT_SIZE
@@ -320,8 +320,8 @@ impl Tokenize for Tokenizer {
                         } else if let Ok(v) = t.parse::<u64>() {
                             vec![Token::EConstant(v)]
                         } else {
-                            // Just returns it as an identifier. It is upto the
-                            // parser to decide if it is a valid token.
+            // Just returns it as an identifier. It is upto the
+            // parser to decide if it is a valid token.
                             vec![Token::EIdentifier(t.to_owned())]
                         }
                     }

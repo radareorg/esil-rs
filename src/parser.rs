@@ -1,9 +1,17 @@
+// Copyright (c) 2015, The Radare Project. All rights reserved.
+// See the COPYING file at the top-level directory of this distribution.
+// Licensed under the BSD 3-Clause License:
+// <http://opensource.org/licenses/BSD-3-Clause>
+// This file may not be copied, modified, or distributed
+// except according to those terms.
+
 use lexer::{Token, Tokenize};
 
 use std::fmt::Debug;
 use std::collections::VecDeque;
 use std::collections::HashSet;
 
+#[derive(Debug, Clone)]
 pub struct Parser {
     stack: Vec<Token>,
     tstack: Vec<Token>,
@@ -15,9 +23,9 @@ pub trait Parse {
 	type InType: Clone + Debug + PartialEq;
 	type OutType: Clone + Debug;
 
-    fn parse<S: AsRef<str>, T: Tokenize<Token = Self::InType>>(&mut self,
-                                                               S)
-                                                               -> Option<Self::OutType>;
+    fn parse<S, T>(&mut self, S) -> Option<Self::OutType>
+        where S: AsRef<str>,
+              T: Tokenize<Token = Self::InType>;
 
     fn fetch_operands(&mut self,
                       t: &Self::InType)
@@ -101,52 +109,16 @@ impl Parse for Parser {
 
     // TODO: Think about changing this to a result type rather than option.
     fn fetch_operands(&mut self, t: &Token) -> (Option<Token>, Option<Token>) {
-        // Match the operation.
-        match *t {
-            // Binary.
-            Token::ECmp |
-            Token::ELt |
-            Token::EGt |
-            Token::EEq |
-            Token::ELsl |
-            Token::ELsr |
-            Token::ERor |
-            Token::ERol |
-            Token::EAnd |
-            Token::EOr |
-            Token::EMul |
-            Token::EXor |
-            Token::EAdd |
-            Token::ESub |
-            Token::EDiv |
-            Token::EMod |
-            Token::EPoke(_) |
-            Token::EPeek(_) => {
-                (self.pop_op(), self.pop_op())
-            }
-            // Unary.
-            Token::EPop | Token::ENeg | Token::EIf => {
-                (self.pop_op(), None)
-            }
-            // Zero operands
-            Token::EDump => {
-                (None, None)
-            }
-            Token::ENop => {
-                (None, None)
-            }
-            // Unimplemented.
-            Token::ETodo |
-            Token::EInterrupt |
-            Token::EGoto |
-            Token::EBreak |
-            Token::EClear |
-            Token::EDup |
-            Token::ETrap => {
-                unimplemented!();
-            }
-            // Invalid
-            _ => panic!("Invalid esil opcode!"),
+        if t.is_binary() {
+            (self.pop_op(), self.pop_op())
+        } else if t.is_unary() {
+            (self.pop_op(), None)
+        } else if t.is_arity_zero() {
+            (None, None)
+        } else if !t.is_implemented() {
+            unimplemented!();
+        } else {
+            panic!("Invalid esil opcode!");
         }
     }
 }
@@ -209,9 +181,8 @@ impl Parser {
                                   .cloned());
             }
             Token::IOverflow(_bit) => {
-                // XXX: This may be potentially buggy and may have to be replaced by using
-                // lastsz
-                // instead of bit (as that is the right thing to do).
+                // FIXME: This may be potentially buggy and may have to be replaced by using
+                // lastsz instead of bit (as that is the right thing to do).
                 let carry_in_bit = (_bit - 2) & 0x3F;
                 let carry_out_bit = (_bit - 1) & 0x3F;
                 let x = [Token::PCopy(1),
@@ -272,34 +243,18 @@ impl Parser {
             panic!("Insufficient operands!");
         }
     }
-
-
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use ::lexer::*;
-    use ::evaluator::*;
+    use lexer::*;
+    use std::collections::{HashMap, VecDeque};
 
-    struct Evaluator;
-    impl ActionHandler for Evaluator {
-        type InType = Token;
-        type OutType = u8;
-        fn init() -> Evaluator {
-            Evaluator
-        }
-        fn evaluate(&mut self, i: &Self::InType) {
-            println!("{:?}", i);
-        }
-        fn results(&mut self) -> Option<Self::OutType> {
-            None
-        }
+    struct Evaluator<P: Parse + Clone> {
+        instructions: VecDeque<String>,
+        values: HashMap<String, u64>,
+        parser: P,
     }
-
-    #[test]
-    fn parser_dummy() {
-        let mut p = Parser::<Evaluator>::init();
-        p.parse::<_, Tokenizer>("a,b,+=");
-    }
+    // TODO: Tests using a VM emulator
 }

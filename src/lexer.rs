@@ -1,3 +1,10 @@
+// Copyright (c) 2015, The Radare Project. All rights reserved.
+// See the COPYING file at the top-level directory of this distribution.
+// Licensed under the BSD 3-Clause License:
+// <http://opensource.org/licenses/BSD-3-Clause>
+// This file may not be copied, modified, or distributed
+// except according to those terms.
+
 use std::fmt::Debug;
 use num::traits::Num;
 use std::collections::VecDeque;
@@ -63,6 +70,59 @@ pub enum Token {
     ECur,
     ELastsz,
     EAddress,
+}
+
+impl Token {
+    pub fn is_binary(&self) -> bool {
+        match *self {
+            Token::ECmp |
+            Token::ELt |
+            Token::EGt |
+            Token::EEq |
+            Token::ELsl |
+            Token::ELsr |
+            Token::ERor |
+            Token::ERol |
+            Token::EAnd |
+            Token::EOr |
+            Token::EMul |
+            Token::EXor |
+            Token::EAdd |
+            Token::ESub |
+            Token::EDiv |
+            Token::EMod |
+            Token::EPoke(_) |
+            Token::EPeek(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_unary(&self) -> bool {
+        match *self {
+            Token::EPop | Token::ENeg | Token::EIf => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_arity_zero(&self) -> bool {
+        match *self {
+            Token::EDump | Token::ENop => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_implemented(&self) -> bool {
+        match *self {
+            Token::ETodo |
+            Token::EInterrupt |
+            Token::EGoto |
+            Token::EBreak |
+            Token::EClear |
+            Token::EDup |
+            Token::ETrap => false,
+            _ => true,
+        }
+    }
 }
 
 pub trait Tokenize {

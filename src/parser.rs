@@ -256,5 +256,37 @@ mod test {
         values: HashMap<String, u64>,
         parser: P,
     }
-    // TODO: Tests using a VM emulator
+
+    #[test]
+    fn parser_zf() {
+        //let mut p = Parser::init(None);
+        //let esil_str = "ebx,eax,+=,$z,zf,=";
+        //let mut expected = vec![(Token::EAdd,
+                         //Token::EIdentifier("eax".to_owned()),
+                         //Token::EIdentifier("ebx".to_owned())),
+        //(Token::EEq, Token::EIdentifier("eax".to_owned()), Token::EIdentifier("eax EAdd ebx".to_owned()))];
+
+        //expected.reverse();
+        //while let Some(token) = p.parse::<_, Tokenizer>(esil_str) {
+            //let (eop, elhs, erhs) = expected.pop().unwrap();
+            //assert_eq!(eop, token);
+            //let (lhs, rhs) = p.fetch_operands(&token);
+            //let lhs_str = if let Some(Token::EIdentifier(ref s)) = lhs {
+                //s.clone()
+            //} else {
+                //unreachable!()
+            //};
+            //let rhs_str = if let Some(Token::EIdentifier(ref s)) = rhs {
+                //s.clone()
+            //} else {
+                //unreachable!()
+            //};
+            //println!("[*] Processing: {:?} {:?} {:?}", token, lhs, rhs);
+            //assert_eq!(Some(elhs), lhs);
+            //assert_eq!(Some(erhs), rhs);
+            //let res_str = format!("{} {:?} {}", lhs_str, token, rhs_str);
+            //p.push(Token::EIdentifier(res_str));
+            //println!("[*] Processed: {:?} {:?} {:?}", token, lhs, rhs);
+        //}
+    }
 }

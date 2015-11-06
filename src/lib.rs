@@ -9,3 +9,4 @@ extern crate num;
 
 pub mod lexer;
 pub mod parser;
+pub mod memory;

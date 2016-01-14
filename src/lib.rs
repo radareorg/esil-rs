@@ -6,7 +6,8 @@
 // except according to those terms.
 
 extern crate num;
+extern crate petgraph;
 
 pub mod lexer;
 pub mod parser;
-pub mod memory;
+//pub mod memory;

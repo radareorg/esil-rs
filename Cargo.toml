@@ -5,3 +5,4 @@ authors = ["Sushant <sushant.dinesh94@gmail.com>"]
 
 [dependencies]
 num = "*"
+petgraph = "*"

@@ -21,6 +21,7 @@ pub enum Token {
     EGt,
     EEq,
     EIf,
+    EEndIf,
     ELsl,
     ELsr,
     ERor,
@@ -63,6 +64,9 @@ pub enum Token {
     // Esil Operands
     EConstant(u64),
     EIdentifier(String),
+    // Custom type to allow pusing symbol table entries.
+    EEntry(usize),
+    ERegister(String),
     // Meta-variables
     // These are not emmitted by the lexer, but is used by the parser to communicate special
     // variables to the `Evaluator`.
@@ -91,15 +95,14 @@ impl Token {
             Token::ESub |
             Token::EDiv |
             Token::EMod |
-            Token::EPoke(_) |
-            Token::EPeek(_) => true,
+            Token::EPoke(_) => true,
             _ => false,
         }
     }
 
     pub fn is_unary(&self) -> bool {
         match *self {
-            Token::EPop | Token::ENeg | Token::EIf => true,
+            Token::EPop | Token::ENeg | Token::EIf | Token::EPeek(_) => true,
             _ => false,
         }
     }

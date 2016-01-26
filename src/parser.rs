@@ -17,6 +17,12 @@ pub struct Parser {
     tstack: Vec<Token>,
     regset: Option<HashSet<String>>,
     tokens: Option<VecDeque<Token>>,
+    // Allow access for the consumer to set these. If these are set, then the parser automatically
+    // returns the value of old, cur and lastsz when required rather than returning the tokens to
+    // indicate the same.
+    pub eold: Option<Token>,
+    pub ecur: Option<Token>,
+    pub lastsz: Option<Token>,
 }
 
 pub trait Parse {
@@ -135,7 +141,19 @@ impl Parser {
             tstack: Vec::new(),
             regset: regset,
             tokens: None,
+            eold: None,
+            ecur: None,
+            lastsz: None,
         }
+    }
+
+    fn get_meta(&self, t: Token) -> Token {
+        match t {
+            Token::EOld => self.eold.as_ref().unwrap_or(&t),
+            Token::ECur => self.ecur.as_ref().unwrap_or(&t),
+            Token::ELastsz => self.lastsz.as_ref().unwrap_or(&t),
+            _ => panic!("Improper usage of function."),
+        }.clone()
     }
 
     fn evaluate_internal(&self, t: &Token) -> VecDeque<Token> {
@@ -150,15 +168,15 @@ impl Parser {
         };
         match *t {
             Token::IZero(_) => {
-                result.extend([Token::ECur, Token::EConstant(0), Token::ECmp].iter().cloned())
+                result.extend([self.get_meta(Token::ECur), Token::EConstant(0), Token::ECmp].iter().cloned())
             }
             Token::ICarry(_bit) => {
                 let bit = (_bit - 1) & 0x3F;
                 let x = [Token::PCopy(1),
-                         Token::ECur,
+                         self.get_meta(Token::ECur),
                          Token::EAnd,
                          Token::PPop(1),
-                         Token::EOld,
+                         self.get_meta(Token::EOld),
                          Token::EAnd,
                          Token::EGt];
                 result.extend(genmask(bit).iter().cloned());
@@ -174,7 +192,7 @@ impl Parser {
                                Token::EConstant(c3),
                                Token::EConstant(c2),
                                Token::EConstant(c1),
-                               Token::ECur,
+                               self.get_meta(Token::ECur),
                                Token::EMul,
                                Token::EAnd,
                                Token::EMod,
@@ -188,10 +206,10 @@ impl Parser {
                 let carry_in_bit = (_bit - 2) & 0x3F;
                 let carry_out_bit = (_bit - 1) & 0x3F;
                 let x = [Token::PCopy(1),
-                         Token::ECur,
+                         self.get_meta(Token::ECur),
                          Token::EAnd,
                          Token::PPop(1),
-                         Token::EOld,
+                         self.get_meta(Token::EOld),
                          Token::EAnd,
                          Token::EGt];
                 result.extend(genmask(carry_in_bit).iter().cloned());
@@ -204,7 +222,7 @@ impl Parser {
                 result.extend([Token::EConstant(1),
                                Token::EConstant(1),
                                Token::EConstant(0x1F),
-                               Token::ECur,
+                               self.get_meta(Token::ECur),
                                Token::ELsr,
                                Token::EAnd,
                                Token::ECmp]
@@ -214,10 +232,10 @@ impl Parser {
             Token::IBorrow(_bit) => {
                 let bit = ((_bit & 0x3F) + 0x3F) & 0x3F;
                 let x = [Token::PCopy(1),
-                         Token::ECur,
+                         self.get_meta(Token::ECur),
                          Token::EAnd,
                          Token::PPop(1),
-                         Token::EOld,
+                         self.get_meta(Token::EOld),
                          Token::EAnd,
                          Token::ELt];
                 result.extend(genmask(bit).iter().cloned());

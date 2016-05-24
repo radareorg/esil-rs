@@ -21,6 +21,7 @@ pub struct Parser {
     // returns the value of old, cur and lastsz when required rather than returning the tokens to
     // indicate the same.
     pub eold: Option<Token>,
+    pub eold_: Option<Token>,
     pub ecur: Option<Token>,
     pub lastsz: Option<Token>,
 }
@@ -74,6 +75,7 @@ impl Parse for Parser {
                 Token::EIdentifier(_) |
                 Token::ECur |
                 Token::EOld |
+                Token::EOld_ |
                 Token::ELastsz => {
                     self.push(token);
 
@@ -142,6 +144,7 @@ impl Parser {
             regset: regset,
             tokens: None,
             eold: None,
+            eold_: None,
             ecur: None,
             lastsz: None,
         }
@@ -150,37 +153,45 @@ impl Parser {
     fn get_meta(&self, t: Token) -> Token {
         match t {
             Token::EOld => self.eold.as_ref().unwrap_or(&t),
+            Token::EOld_ => self.eold_.as_ref().unwrap_or(&t),
             Token::ECur => self.ecur.as_ref().unwrap_or(&t),
             Token::ELastsz => self.lastsz.as_ref().unwrap_or(&t),
             _ => panic!("Improper usage of function."),
-        }.clone()
+        }
+        .clone()
     }
 
     fn evaluate_internal(&self, t: &Token) -> VecDeque<Token> {
         let mut result = VecDeque::new();
-        let genmask = |bit: u8| {
-            // ( 2 << bit ) - 1
+        // Set the lower most `bit` bits to 1.
+        let genmask = |bit: u64| {
+            // ( 1 << bit ) - 1
             [Token::EConstant(1),
-             Token::EConstant(bit as u64),
-             Token::EConstant(2),
+             Token::EConstant(bit),
+             Token::EConstant(1),
              Token::ELsl,
              Token::ESub]
         };
+
+        // Initialize esil vars.
+        let esil_old = self.get_meta(Token::EOld);
+        let esil_old_ = self.get_meta(Token::EOld_);
+        let esil_cur = self.get_meta(Token::ECur);
+        let lastsz = match self.get_meta(Token::ELastsz) {
+            Token::ELastsz => panic!("lastsz unset!"),
+            Token::EConstant(size) => size,
+            _ => panic!("lastsz cannot be something other than a constant!"),
+        };
+
         match *t {
             Token::IZero(_) => {
-                result.extend([self.get_meta(Token::ECur), Token::EConstant(0), Token::ECmp].iter().cloned())
+                result.extend(genmask(lastsz).iter().cloned());
+                result.extend([esil_cur, Token::EAnd, Token::EConstant(0), Token::ECmp]
+                                  .iter()
+                                  .cloned())
             }
             Token::ICarry(_bit) => {
-                let bit = (_bit - 1) & 0x3F;
-                let x = [Token::PCopy(1),
-                         self.get_meta(Token::ECur),
-                         Token::EAnd,
-                         Token::PPop(1),
-                         self.get_meta(Token::EOld),
-                         Token::EAnd,
-                         Token::EGt];
-                result.extend(genmask(bit).iter().cloned());
-                result.extend(x.iter().cloned());
+                result.extend([esil_cur, esil_old, Token::EGt].iter().cloned());
             }
             Token::IParity(_) => {
                 // Parity flag computation as described in:
@@ -192,7 +203,7 @@ impl Parser {
                                Token::EConstant(c3),
                                Token::EConstant(c2),
                                Token::EConstant(c1),
-                               self.get_meta(Token::ECur),
+                               esil_cur,
                                Token::EMul,
                                Token::EAnd,
                                Token::EMod,
@@ -200,46 +211,36 @@ impl Parser {
                                   .iter()
                                   .cloned());
             }
-            Token::IOverflow(_bit) => {
-                // FIXME: This may be potentially buggy and may have to be replaced by using
-                // lastsz instead of bit (as that is the right thing to do).
-                let carry_in_bit = (_bit - 2) & 0x3F;
-                let carry_out_bit = (_bit - 1) & 0x3F;
-                let x = [Token::PCopy(1),
-                         self.get_meta(Token::ECur),
-                         Token::EAnd,
-                         Token::PPop(1),
-                         self.get_meta(Token::EOld),
-                         Token::EAnd,
-                         Token::EGt];
-                result.extend(genmask(carry_in_bit).iter().cloned());
-                result.extend(x.iter().cloned());
-                result.extend(genmask(carry_out_bit).iter().cloned());
-                result.extend(x.iter().cloned());
-                result.extend([Token::EXor].iter().cloned());
-            }
-            Token::ISign(_) => {
+            Token::IOverflow(bit) => {
+                // of = ((((~eold ^ eold_) & (enew ^ eold)) >> (lastsz - 1)) & 1) == 1
                 result.extend([Token::EConstant(1),
                                Token::EConstant(1),
-                               Token::EConstant(0x1F),
-                               self.get_meta(Token::ECur),
+                               Token::EConstant(lastsz - 1),
+                               esil_old.clone(),
+                               esil_cur,
+                               Token::EXor,
+                               esil_old_,
+                               esil_old.clone(),
+                               Token::ENeg,
+                               Token::EXor,
+                               Token::EAnd,
                                Token::ELsr,
                                Token::EAnd,
                                Token::ECmp]
                                   .iter()
                                   .cloned());
             }
+            Token::ISign(_) => {
+                result.extend([Token::EConstant(1),
+                               self.get_meta(Token::ELastsz),
+                               Token::ESub,
+                               self.get_meta(Token::ECur),
+                               Token::ELsr]
+                                  .iter()
+                                  .cloned());
+            }
             Token::IBorrow(_bit) => {
-                let bit = ((_bit & 0x3F) + 0x3F) & 0x3F;
-                let x = [Token::PCopy(1),
-                         self.get_meta(Token::ECur),
-                         Token::EAnd,
-                         Token::PPop(1),
-                         self.get_meta(Token::EOld),
-                         Token::EAnd,
-                         Token::ELt];
-                result.extend(genmask(bit).iter().cloned());
-                result.extend(x.iter().cloned());
+                result.extend([esil_cur, esil_old, Token::ELt].iter().cloned());
             }
             Token::ISize(_) => {
                 result.push_front(Token::EConstant(64));
@@ -277,6 +278,7 @@ mod test {
                 Token::EIdentifier(s) => s,
                 Token::EConstant(c) => format!("{:#X}", c),
                 Token::EOld => "rax_old".to_owned(),
+                Token::EOld_ => "rbx_old".to_owned(),
                 Token::ECur => "rax_cur".to_owned(),
                 _ => "".to_owned(),
             }
@@ -284,6 +286,7 @@ mod test {
 
         pub fn run<T: AsRef<str>>(esil: T) -> String {
             let mut p = Parser::init(None);
+            p.lastsz = Some(Token::EConstant(64));
             let mut expression = String::new();
             while let Some(ref token) = p.parse::<_, Tokenizer>(&esil) {
                 let (lhs, rhs) = p.fetch_operands(token);
@@ -311,7 +314,7 @@ mod test {
     #[test]
     fn parser_zf() {
         let expression = ExpressionConstructor::run("$z,zf,=");
-        assert_eq!("(EEq  zf, (ECmp  0x0, rax_cur))", expression);
+        assert_eq!("(EEq  zf, (ECmp  0x0, (EAnd  rax_cur, (ESub  (ELsl  0x1, 0x40), 0x1))))", expression);
     }
 
     #[test]
@@ -323,21 +326,22 @@ mod test {
     #[test]
     fn parser_cf() {
         let expression = ExpressionConstructor::run("$c64,cf,=");
-        let expected = "(EEq  cf, (EGt  (EAnd  rax_old, (ESub  (ELsl  0x2, 0x3F), 0x1)), (EAnd  rax_cur, (ESub  (ELsl  0x2, 0x3F), 0x1))))";
+        let expected = "(EEq  cf, (EGt  rax_old, rax_cur))";
         assert_eq!(expected, expression);
     }
 
     #[test]
     fn parser_of() {
+        // of = ((((~eold ^ eold_) & (enew ^ eold)) >> (lastsz - 1)) & 1) == 1
         let expression = ExpressionConstructor::run("$o,of,=");
-        let expected = "(EEq  of, (EXor  (EGt  (EAnd  rax_old, (ESub  (ELsl  0x2, 0x3F), 0x1)), (EAnd  rax_cur, (ESub  (ELsl  0x2, 0x3F), 0x1))), (EGt  (EAnd  rax_old, (ESub  (ELsl  0x2, 0x3E), 0x1)), (EAnd  rax_cur, (ESub  (ELsl  0x2, 0x3E), 0x1)))))";
+        let expected = "(EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  rax_old, -), rbx_old), (EXor  rax_cur, rax_old)), 0x3F), 0x1), 0x1))";
         assert_eq!(expected, expression);
     }
 
     #[test]
     fn parser_bf() {
         let expression = ExpressionConstructor::run("$b64,cf,=");
-        let expected = "(EEq  cf, (ELt  (EAnd  rax_old, (ESub  (ELsl  0x2, 0x3F), 0x1)), (EAnd  rax_cur, (ESub  (ELsl  0x2, 0x3F), 0x1))))";
+        let expected = "(EEq  cf, (ELt  rax_old, rax_cur))";
         assert_eq!(expected, expression);
     }
 

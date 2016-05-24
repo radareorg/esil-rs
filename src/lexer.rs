@@ -71,6 +71,7 @@ pub enum Token {
     // These are not emmitted by the lexer, but is used by the parser to communicate special
     // variables to the `Evaluator`.
     EOld,
+    EOld_,
     ECur,
     ELastsz,
     EAddress,
@@ -109,7 +110,7 @@ impl Token {
 
     pub fn is_arity_zero(&self) -> bool {
         match *self {
-            Token::EDump | Token::ENop => true,
+            Token::EDump | Token::ENop | Token::EEndIf => true,
             _ => false,
         }
     }
@@ -169,7 +170,7 @@ impl Tokenize for Tokenizer {
                     "&=" => vec![Token::PCopy(1), Token::EAnd, Token::PPop(1),
                     Token::EEq],
 
-                    "}" => vec![Token::ENop],
+                    "}" => vec![Token::EEndIf],
 
                     "|" => vec![Token::EOr],
                     "|=" => vec![Token::PCopy(1), Token::EOr, Token::PPop(1),

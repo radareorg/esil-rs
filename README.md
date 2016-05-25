@@ -1,5 +1,5 @@
 # esil.rs
-[![Build Status](https://travis-ci.org/sushant94/esil-rs.svg)](https://travis-ci.org/sushant94/esil-rs)
+[![Build Status](https://travis-ci.org/radare/esil-rs.svg)](https://travis-ci.org/sushant94/esil-rs)
 
 An ESIL Toolchain written in rust. For more information on ESIL, its usage and
 semantics, please check [documentation](https://github.com/radare/radare2book/blob/master/esil.md).

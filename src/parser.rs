@@ -549,10 +549,10 @@ mod test {
     }
 
     #[test]
-    fn parser_skip_false() {
+    fn parser_follow_false() {
     }
 
     #[test]
-    fn parser_folloow_true() {
+    fn parser_follow_true() {
     }
 }

@@ -6,7 +6,6 @@
 // except according to those terms.
 
 use std::fmt::Debug;
-use num::traits::Num;
 use std::collections::VecDeque;
 
 const ESIL_INTERNAL_PREFIX: char = '$';
@@ -402,7 +401,7 @@ impl Tokenize for Tokenizer {
                                 _ => vec![Token::EInvalid],
                             }
                         } else if t.starts_with("0x") {
-                            match Num::from_str_radix(t.trim_left_matches("0x"), 16) {
+                            match u64::from_str_radix(t.trim_left_matches("0x"), 16) {
                                 Ok(v) => vec![Token::EConstant(v)],
                                 Err(_) => vec![Token::EInvalid],
                             }

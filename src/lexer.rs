@@ -61,11 +61,16 @@ pub enum Token {
     IBorrow(u8),
     ISize(u8),
     IAddress(u8),
+    ISet,
+    IUnset,
     // Esil Operands
     EConstant(u64),
     EIdentifier(String),
-    // Custom type to allow pusing symbol table entries.
-    EEntry(usize),
+    // Custom type to allow pushing symbol table entries.
+    // (entry_id, size - optional. Used to set lastsz.)
+    // If no size is specified for the entry, then the default size from the parser is used to set
+    // the lastsz.
+    EEntry(usize, Option<u64>),
     ERegister(String),
     // Meta-variables
     // These are not emmitted by the lexer, but is used by the parser to communicate special
@@ -122,9 +127,27 @@ impl Token {
             Token::EGoto |
             Token::EBreak |
             Token::EClear |
-            Token::EDup |
             Token::ETrap => false,
             _ => true,
+        }
+    }
+
+    pub fn should_set_vars(&self) -> bool {
+        match *self {
+            Token::ECmp | Token::EEq | Token::EPoke(_) => true,
+            _ => false,
+        }
+    }
+
+    pub fn updates_result(&self) -> bool {
+        // If it an operator
+        if self.is_binary() || self.is_unary() || self.is_arity_zero() {
+            match *self {
+                Token::EEq | Token::EPoke(_) => false,
+                _ => true,
+            }
+        } else {
+            false
         }
     }
 }
@@ -358,7 +381,7 @@ impl Tokenize for Tokenizer {
                     "DUP" => vec![Token::EDup],
                     "TRAP" => vec![Token::ETrap],
                     _   => {
-            // Handle internal vars
+                        // Handle internal vars
                         if Some(ESIL_INTERNAL_PREFIX) == t.chars().nth(0) {
                             let bit = if t.len() < 3 {
                                 DEFAULT_SIZE
@@ -374,6 +397,8 @@ impl Tokenize for Tokenizer {
                                 'r' => vec![Token::ISize(bit)],
                                 'o' => vec![Token::IOverflow(bit)],
                                 's' => vec![Token::ISign(bit)],
+                                '1' => vec![Token::ISet],
+                                '0' => vec![Token::IUnset],
                                 _ => vec![Token::EInvalid],
                             }
                         } else if t.starts_with("0x") {
@@ -384,8 +409,8 @@ impl Tokenize for Tokenizer {
                         } else if let Ok(v) = t.parse::<u64>() {
                             vec![Token::EConstant(v)]
                         } else {
-            // Just returns it as an identifier. It is upto the
-            // parser to decide if it is a valid token.
+                            // Just returns it as an identifier. It is upto the
+                            // parser to decide if it is a valid token.
                             vec![Token::EIdentifier(t.to_owned())]
                         }
                     }

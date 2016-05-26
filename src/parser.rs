@@ -26,7 +26,6 @@ pub struct Parser {
     last_op: Option<Token>,
     // Last two pop operations performed by the consumer.
     last_pop: (Option<Token>, Option<Token>),
-    pop_id: usize,
     // Allow access for the consumer to set these. If these are set, then the parser automatically
     // returns the value of old, cur and lastsz when required rather than returning the tokens to
     // indicate the same.
@@ -208,7 +207,6 @@ impl Parser {
             default_size: default_size.unwrap_or(64),
             last_op: None,
             last_pop: (None, None),
-            pop_id: 0,
             tokens: None,
             eold: None,
             eold_: None,

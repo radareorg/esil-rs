@@ -1,5 +1,6 @@
 # esil.rs
 [![Build Status](https://travis-ci.org/radare/esil-rs.svg)](https://travis-ci.org/sushant94/esil-rs)
+[![Coverage Status](https://coveralls.io/repos/github/radare/esil-rs/badge.svg?branch=master)](https://coveralls.io/github/radare/esil-rs?branch=master)
 
 An ESIL Toolchain written in rust. For more information on ESIL, its usage and
 semantics, please check [documentation](https://github.com/radare/radare2book/blob/master/esil.md).
@@ -36,7 +37,6 @@ Below is the outline for the same.
 ## Todo
 
 * Default Evaluator (ESIL-VM) implementation
-* Tests for parser and lexer using the VM
 * More usage examples and auto-documentation
 
 ## License

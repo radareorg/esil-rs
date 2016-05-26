@@ -82,8 +82,7 @@ impl Parse for Parser {
                 Token::ISign(_) |
                 Token::IBorrow(_) |
                 Token::ISize(_) |
-                Token::ISet |
-                Token::IUnset |
+                Token::IConstant(_) |
                 Token::IAddress(_) => {
                     let mut internal_q = self.evaluate_internal(&token);
                     self.skip_esil_set += internal_q.len();
@@ -313,11 +312,8 @@ impl Parser {
             Token::IAddress(_) => {
                 result.push_front(Token::EAddress);
             }
-            Token::ISet => {
-                result.push_front(Token::EConstant(1));
-            }
-            Token::IUnset => {
-                result.push_front(Token::EConstant(0));
+            Token::IConstant(n) => {
+                result.push_front(Token::EConstant(n));
             }
             _ => unreachable!(),
         }

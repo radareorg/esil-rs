@@ -60,8 +60,7 @@ pub enum Token {
     IBorrow(u8),
     ISize(u8),
     IAddress(u8),
-    ISet,
-    IUnset,
+    IConstant(u64),
     // Esil Operands
     EConstant(u64),
     EIdentifier(String),
@@ -396,9 +395,13 @@ impl Tokenize for Tokenizer {
                                 'r' => vec![Token::ISize(bit)],
                                 'o' => vec![Token::IOverflow(bit)],
                                 's' => vec![Token::ISign(bit)],
-                                '1' => vec![Token::ISet],
-                                '0' => vec![Token::IUnset],
-                                _ => vec![Token::EInvalid],
+                                _ => {
+                                    if let Ok(num) = t[1..].parse::<u64>() {
+                                        vec![Token::IConstant(num)]
+                                    } else {
+                                        vec![Token::EInvalid]
+                                    }
+                                }
                             }
                         } else if t.starts_with("0x") {
                             match u64::from_str_radix(t.trim_left_matches("0x"), 16) {

@@ -132,7 +132,11 @@ impl Token {
 
     pub fn should_set_vars(&self) -> bool {
         match *self {
-            Token::ECmp | Token::EEq | Token::EPoke(_) => true,
+            Token::ECmp |
+            Token::EEq |
+            Token::EPoke(_) |
+            Token::EGt |
+            Token::ELt => true,
             _ => false,
         }
     }
@@ -379,7 +383,7 @@ impl Tokenize for Tokenizer {
                     "DUP" => vec![Token::EDup],
                     "TRAP" => vec![Token::ETrap],
                     _   => {
-                        // Handle internal vars
+            // Handle internal vars
                         if Some(ESIL_INTERNAL_PREFIX) == t.chars().nth(0) {
                             let bit = if t.len() < 3 {
                                 DEFAULT_SIZE
@@ -411,8 +415,8 @@ impl Tokenize for Tokenizer {
                         } else if let Ok(v) = t.parse::<u64>() {
                             vec![Token::EConstant(v)]
                         } else {
-                            // Just returns it as an identifier. It is upto the
-                            // parser to decide if it is a valid token.
+            // Just returns it as an identifier. It is upto the
+            // parser to decide if it is a valid token.
                             vec![Token::EIdentifier(t.to_owned())]
                         }
                     }

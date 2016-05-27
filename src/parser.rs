@@ -166,12 +166,12 @@ impl Parse for Parser {
         if self.skip_esil_set == 0 {
             if t.should_set_vars() {
                 // For ECmp, last_pop should be the operands we to the ECmp.
-                if *t == Token::ECmp {
+                if t.updates_result() {
                     self.last_pop = result.clone();
                 }
                 self.eold = self.last_pop.0.clone();
                 self.eold_ = self.last_pop.1.clone();
-                if *t != Token::ECmp {
+                if !t.updates_result() {
                     self.ecur = result.1.clone();
                 }
                 self.lastsz = Some(Token::EConstant(match self.eold {
@@ -512,8 +512,9 @@ mod test {
     fn parser_x86_cmp() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("0,rax,rax,&,==,$0,of,=,$s,sf,=,$z,zf,=,$0,cf,=,$p,pf,=",
-                                              Some(&mut parser));
+        let expr =
+            ExpressionConstructor::run("0,rax,rax,&,==,$0,of,=,$s,sf,=,$z,zf,=,$0,cf,=,$p,pf,=",
+                                       Some(&mut parser));
 
         let expected = "(ECmp  (EAnd  rax, rax), 0x0)\
                         (EEq  of, 0x0)\
@@ -526,11 +527,33 @@ mod test {
     }
 
     #[test]
+    fn parser_lt_gt() {
+        let regset = sample_regset();
+        let mut parser = Parser::init(Some(regset), Some(64));
+        let _expr = ExpressionConstructor::run("rax,rbx,<", Some(&mut parser));
+
+        assert_eq!(parser.eold, Some(Token::EIdentifier("rbx".to_owned())));
+        assert_eq!(parser.eold_, Some(Token::EIdentifier("rax".to_owned())));
+        assert_eq!(parser.ecur,
+                   Some(Token::EIdentifier("(ELt  rbx, rax)".to_owned())));
+        assert_eq!(parser.lastsz, Some(Token::EConstant(64)));
+
+        let _expr = ExpressionConstructor::run("rbx,rax,>", Some(&mut parser));
+
+        assert_eq!(parser.eold, Some(Token::EIdentifier("rax".to_owned())));
+        assert_eq!(parser.eold_, Some(Token::EIdentifier("rbx".to_owned())));
+        assert_eq!(parser.ecur,
+                   Some(Token::EIdentifier("(EGt  rax, rbx)".to_owned())));
+        assert_eq!(parser.lastsz, Some(Token::EConstant(64)));
+    }
+
+    #[test]
     fn parser_x86_adc() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
-                                              Some(&mut parser));
+        let expr =
+            ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+                                       Some(&mut parser));
 
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
@@ -544,9 +567,11 @@ mod test {
 
     #[test]
     fn parser_follow_false() {
+        // TODO
     }
 
     #[test]
     fn parser_follow_true() {
+        // TODO
     }
 }

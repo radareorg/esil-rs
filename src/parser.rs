@@ -96,7 +96,8 @@ impl Parse for Parser {
                 Token::ECur |
                 Token::EOld |
                 Token::EOld_ |
-                Token::ELastsz => {
+                Token::ELastsz |
+                Token::EEntry(_, _) => {
                     self.push(token);
                 }
                 // Parser Instructions.
@@ -151,6 +152,7 @@ impl Parse for Parser {
     }
 
     fn fetch_operands(&mut self, t: &Token) -> (Option<Token>, Option<Token>) {
+        println!("Fetch operands: {:?}", t);
         let result = if t.is_binary() {
             (self.pop_op(), self.pop_op())
         } else if t.is_unary() {
@@ -175,6 +177,7 @@ impl Parse for Parser {
                     self.ecur = result.1.clone();
                 }
                 self.lastsz = Some(Token::EConstant(match self.eold {
+                    None => self.default_size,
                     Some(Token::EIdentifier(ref s)) => {
                         if let Some(ref map) = self.ident_map {
                             map.get(s).cloned().unwrap_or(self.default_size)
@@ -563,6 +566,10 @@ mod test {
                         (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAdd  eax, (EAdd  eax, cf)), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
+    }
+
+    #[test]
+    fn parser_negative_numbers() {
     }
 
     #[test]

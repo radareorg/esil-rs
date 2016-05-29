@@ -132,11 +132,7 @@ impl Token {
 
     pub fn should_set_vars(&self) -> bool {
         match *self {
-            Token::ECmp |
-            Token::EEq |
-            Token::EPoke(_) |
-            Token::EGt |
-            Token::ELt => true,
+            Token::ECmp | Token::EEq | Token::EPoke(_) | Token::EGt | Token::ELt => true,
             _ => false,
         }
     }
@@ -412,11 +408,13 @@ impl Tokenize for Tokenizer {
                                 Ok(v) => vec![Token::EConstant(v)],
                                 Err(_) => vec![Token::EInvalid],
                             }
+                        } else if let Ok(v) = t.parse::<i64>() {
+                            vec![Token::EConstant(v as u64)]
                         } else if let Ok(v) = t.parse::<u64>() {
                             vec![Token::EConstant(v)]
                         } else {
-            // Just returns it as an identifier. It is upto the
-            // parser to decide if it is a valid token.
+                            // Just returns it as an identifier. It is upto the
+                            // parser to decide if it is a valid token.
                             vec![Token::EIdentifier(t.to_owned())]
                         }
                     }
@@ -434,5 +432,35 @@ mod test {
     fn esil_basic() {
         let op = vec![Token::EAdd];
         assert_eq!(op[0], Tokenizer::tokenize("+")[0]);
+    }
+
+    #[test]
+    fn negative_int() {
+        assert_eq!(Token::EConstant(0xFFFFFFFFFFFFFFFF),
+                   Tokenizer::tokenize("-1")[0]);
+    }
+
+    #[test]
+    fn u64_max_int() {
+        assert_eq!(Token::EConstant(u64::max_value()),
+                   Tokenizer::tokenize("18446744073709551615")[0]);
+    }
+
+    #[test]
+    fn u64_min_int() {
+        assert_eq!(Token::EConstant(0),
+                   Tokenizer::tokenize(format!("{}", u64::min_value()))[0]);
+    }
+
+    #[test]
+    fn i64_min_int() {
+        assert_eq!(Token::EConstant(i64::min_value() as u64),
+                   Tokenizer::tokenize(format!("{}", i64::min_value()))[0]);
+    }
+
+    #[test]
+    fn i64_max_int() {
+        assert_eq!(Token::EConstant(i64::max_value() as u64),
+                   Tokenizer::tokenize(format!("{}", i64::max_value()))[0]);
     }
 }

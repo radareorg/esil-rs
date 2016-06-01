@@ -233,11 +233,11 @@ impl Parser {
         // Set the lower most `bit` bits to 1.
         let genmask = |bit: u64| {
             // ( 1 << bit ) - 1
-            [Token::EConstant(1),
-             Token::EConstant(bit),
-             Token::EConstant(1),
-             Token::ELsl,
-             Token::ESub]
+            if bit == 64 {
+                [Token::EConstant(u64::max_value())]
+            } else {
+                [Token::EConstant((1 << bit) - 1)]
+            }
         };
 
         // Initialize esil vars.
@@ -410,7 +410,7 @@ mod test {
     #[test]
     fn parser_zf() {
         let expression = construct!("$z,zf,=");
-        assert_eq!("(EEq  zf, (ECmp  0x0, (EAnd  rax_cur, (ESub  (ELsl  0x1, 0x40), 0x1))))",
+        assert_eq!("(EEq  zf, (ECmp  0x0, (EAnd  rax_cur, 0xFFFFFFFFFFFFFFFF)))",
                    expression);
     }
 
@@ -487,7 +487,7 @@ mod test {
         let expected = "(EEq  rax, (EAdd  rax, rbx))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  rax, -), rbx), (EXor  (EAdd  rax, rbx), rax)), 0x3F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  rax, rbx), (ESub  0x40, 0x1)))\
-                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  rax, rbx), (ESub  (ELsl  0x1, 0x40), 0x1))))\
+                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  rax, rbx), 0xFFFFFFFFFFFFFFFF)))\
                         (EEq  cf, (EGt  rax, (EAdd  rax, rbx)))\
                         (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAdd  rax, rbx), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
@@ -504,7 +504,7 @@ mod test {
         let expected = "(EEq  eax, (EAdd  eax, ebx))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), ebx), (EXor  (EAdd  eax, ebx), eax)), 0x1F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  eax, ebx), (ESub  0x20, 0x1)))\
-                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  eax, ebx), (ESub  (ELsl  0x1, 0x20), 0x1))))\
+                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  eax, ebx), 0xFFFFFFFF)))\
                         (EEq  cf, (EGt  eax, (EAdd  eax, ebx)))\
                         (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAdd  eax, ebx), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
@@ -520,11 +520,11 @@ mod test {
                                        Some(&mut parser));
 
         let expected = "(ECmp  (EAnd  rax, rax), 0x0)\
-                        (EEq  of, 0x0)\
-                        (EEq  sf, (ELsr  (ECmp  (EAnd  rax, rax), 0x0), (ESub  0x40, 0x1)))\
-                        (EEq  zf, (ECmp  0x0, (EAnd  (ECmp  (EAnd  rax, rax), 0x0), (ESub  (ELsl  0x1, 0x40), 0x1))))\
-                        (EEq  cf, 0x0)\
-                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (ECmp  (EAnd  rax, rax), 0x0), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
+        (EEq  of, 0x0)\
+        (EEq  sf, (ELsr  (ECmp  (EAnd  rax, rax), 0x0), (ESub  0x40, 0x1)))\
+        (EEq  zf, (ECmp  0x0, (EAnd  (ECmp  (EAnd  rax, rax), 0x0), 0xFFFFFFFFFFFFFFFF)))\
+        (EEq  cf, 0x0)\
+        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (ECmp  (EAnd  rax, rax), 0x0), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
     }
@@ -561,7 +561,7 @@ mod test {
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  eax, (EAdd  eax, cf)), (ESub  0x20, 0x1)))\
-                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  eax, (EAdd  eax, cf)), (ESub  (ELsl  0x1, 0x20), 0x1))))\
+                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF)))\
                         (EEq  cf, (EGt  eax, (EAdd  eax, (EAdd  eax, cf))))\
                         (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAdd  eax, (EAdd  eax, cf)), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 

@@ -152,7 +152,6 @@ impl Parse for Parser {
     }
 
     fn fetch_operands(&mut self, t: &Token) -> (Option<Token>, Option<Token>) {
-        println!("Fetch operands: {:?}", t);
         let result = if t.is_binary() {
             (self.pop_op(), self.pop_op())
         } else if t.is_unary() {

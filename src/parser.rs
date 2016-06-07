@@ -60,6 +60,7 @@ impl Parse for Parser {
     {
         // TODO: Add notes about mechanism.
         if self.tokens.is_none() {
+            self.skip_esil_set = 0;
             self.tokens = Some(T::tokenize(esil));
         }
 
@@ -85,8 +86,9 @@ impl Parse for Parser {
                 Token::IConstant(_) |
                 Token::IAddress(_) => {
                     let mut internal_q = self.evaluate_internal(&token);
-                    self.skip_esil_set += internal_q.len();
+                    //self.skip_esil_set += internal_q.len() + 1;
                     while let Some(i) = internal_q.pop_back() {
+                        // count the number of operations to skip for.
                         self.tokens.as_mut().map(|v| v.push_front(i));
                     }
                 }
@@ -136,6 +138,8 @@ impl Parse for Parser {
                 _ => {
                     if self.skip_esil_set == 0 {
                         self.last_op = Some(token.clone());
+                    } else {
+                        self.skip_esil_set -= 1;
                     }
                     return Some(token);
                 }
@@ -227,7 +231,7 @@ impl Parser {
         .clone()
     }
 
-    fn evaluate_internal(&self, t: &Token) -> VecDeque<Token> {
+    fn evaluate_internal(&mut self, t: &Token) -> VecDeque<Token> {
         let mut result = VecDeque::new();
         // Set the lower most `bit` bits to 1.
         let genmask = |bit: u64| {
@@ -249,15 +253,20 @@ impl Parser {
             _ => panic!("lastsz cannot be something other than a constant!"),
         };
 
+        // NOTE: self.skip_esil_set must be set to the number of operations that you are
+        // introducing as a part of the internal evaluation. This is also equal to the number of
+        // tokens that will be returned from the parser to the consumer.
         match *t {
             Token::IZero(_) => {
                 result.extend(genmask(lastsz).iter().cloned());
                 result.extend([esil_cur, Token::EAnd, Token::EConstant(0), Token::ECmp]
                                   .iter()
-                                  .cloned())
+                                  .cloned());
+                self.skip_esil_set = 4;
             }
             Token::ICarry(_bit) => {
                 result.extend([esil_cur, esil_old, Token::EGt].iter().cloned());
+                self.skip_esil_set = 3;
             }
             Token::IParity(_) => {
                 // Parity flag computation as described in:
@@ -276,6 +285,7 @@ impl Parser {
                                Token::EAnd]
                                   .iter()
                                   .cloned());
+                self.skip_esil_set = 6;
             }
             Token::IOverflow(_bit) => {
                 // of = ((((~eold ^ eold_) & (enew ^ eold)) >> (lastsz - 1)) & 1) == 1
@@ -295,6 +305,7 @@ impl Parser {
                                Token::ECmp]
                                   .iter()
                                   .cloned());
+                self.skip_esil_set = 9;
             }
             Token::ISign(_) => {
                 result.extend([Token::EConstant(1),
@@ -304,18 +315,23 @@ impl Parser {
                                Token::ELsr]
                                   .iter()
                                   .cloned());
+                self.skip_esil_set = 4;
             }
             Token::IBorrow(_bit) => {
                 result.extend([esil_cur, esil_old, Token::ELt].iter().cloned());
+                self.skip_esil_set = 3;
             }
             Token::ISize(_) => {
                 result.push_front(Token::EConstant(self.default_size));
+                self.skip_esil_set = 2;
             }
             Token::IAddress(_) => {
                 result.push_front(Token::EAddress);
+                self.skip_esil_set = 2;
             }
             Token::IConstant(n) => {
                 result.push_front(Token::EConstant(n));
+                self.skip_esil_set = 2;
             }
             _ => unreachable!(),
         }
@@ -568,7 +584,27 @@ mod test {
     }
 
     #[test]
-    fn parser_negative_numbers() {
+    fn parser_multiple_insts() {
+        let regset = sample_regset();
+        let mut parser = Parser::init(Some(regset), Some(64));
+        let expr = ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+                                       Some(&mut parser));
+
+        let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
+                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
+                        (EEq  sf, (ELsr  (EAdd  eax, (EAdd  eax, cf)), (ESub  0x20, 0x1)))\
+                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF)))\
+                        (EEq  cf, (EGt  eax, (EAdd  eax, (EAdd  eax, cf))))\
+                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAdd  eax, (EAdd  eax, cf)), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
+
+        assert_eq!(expected, &expr);
+        assert_eq!(parser.skip_esil_set, 1);
+
+        let _ = ExpressionConstructor::run("rax,rbx,-=,$0,cf,=", Some(&mut parser));
+        assert_eq!(parser.eold, Some(Token::EIdentifier("rbx".to_owned())));
+        assert_eq!(parser.eold_, Some(Token::EIdentifier("rax".to_owned())));
+        assert_eq!(parser.ecur, Some(Token::EIdentifier("(ESub  rbx, rax)".to_owned())));
+        assert_eq!(parser.skip_esil_set, 1);
     }
 
     #[test]

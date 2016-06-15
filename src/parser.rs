@@ -259,7 +259,7 @@ impl Parser {
         match *t {
             Token::IZero(_) => {
                 result.extend(genmask(lastsz).iter().cloned());
-                result.extend([esil_cur, Token::EAnd, Token::EConstant(0), Token::ECmp]
+                result.extend([esil_cur, Token::EAnd, Token::EConstant(1), Token::EXor]
                                   .iter()
                                   .cloned());
                 self.skip_esil_set = 4;
@@ -278,14 +278,16 @@ impl Parser {
                                Token::EConstant(c3),
                                Token::EConstant(c2),
                                Token::EConstant(c1),
+                               Token::EConstant(0xFF),
                                esil_cur,
+                               Token::EAnd,
                                Token::EMul,
                                Token::EAnd,
                                Token::EMod,
                                Token::EAnd]
                                   .iter()
                                   .cloned());
-                self.skip_esil_set = 6;
+                self.skip_esil_set = 7;
             }
             Token::IOverflow(_bit) => {
                 // of = ((((~eold ^ eold_) & (enew ^ eold)) >> (lastsz - 1)) & 1) == 1
@@ -302,7 +304,8 @@ impl Parser {
                                Token::EAnd,
                                Token::ELsr,
                                Token::EAnd,
-                               Token::ECmp]
+                               Token::EConstant(1),
+                               Token::EXor]
                                   .iter()
                                   .cloned());
                 self.skip_esil_set = 9;

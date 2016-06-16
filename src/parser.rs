@@ -304,8 +304,7 @@ impl Parser {
                                Token::EAnd,
                                Token::ELsr,
                                Token::EAnd,
-                               Token::EConstant(1),
-                               Token::EXor]
+                               Token::ECmp]
                                   .iter()
                                   .cloned());
                 self.skip_esil_set = 9;
@@ -428,14 +427,14 @@ mod test {
     #[test]
     fn parser_zf() {
         let expression = construct!("$z,zf,=");
-        assert_eq!("(EEq  zf, (ECmp  0x0, (EAnd  rax_cur, 0xFFFFFFFFFFFFFFFF)))",
+        assert_eq!("(EEq  zf, (EXor  0x1, (EAnd  rax_cur, 0xFFFFFFFFFFFFFFFF)))",
                    expression);
     }
 
     #[test]
     fn parser_pf() {
         let expression = construct!("$p,pf,=");
-        assert_eq!("(EEq  pf, (EAnd  (EMod  (EAnd  (EMul  rax_cur, 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))", expression);
+        assert_eq!("(EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  rax_cur, 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))", expression);
     }
 
     #[test]
@@ -505,9 +504,9 @@ mod test {
         let expected = "(EEq  rax, (EAdd  rax, rbx))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  rax, -), rbx), (EXor  (EAdd  rax, rbx), rax)), 0x3F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  rax, rbx), (ESub  0x40, 0x1)))\
-                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  rax, rbx), 0xFFFFFFFFFFFFFFFF)))\
+                        (EEq  zf, (EXor  0x1, (EAnd  (EAdd  rax, rbx), 0xFFFFFFFFFFFFFFFF)))\
                         (EEq  cf, (EGt  rax, (EAdd  rax, rbx)))\
-                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAdd  rax, rbx), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
+                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  rax, rbx), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
     }
@@ -522,9 +521,9 @@ mod test {
         let expected = "(EEq  eax, (EAdd  eax, ebx))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), ebx), (EXor  (EAdd  eax, ebx), eax)), 0x1F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  eax, ebx), (ESub  0x20, 0x1)))\
-                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  eax, ebx), 0xFFFFFFFF)))\
+                        (EEq  zf, (EXor  0x1, (EAnd  (EAdd  eax, ebx), 0xFFFFFFFF)))\
                         (EEq  cf, (EGt  eax, (EAdd  eax, ebx)))\
-                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAdd  eax, ebx), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
+                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, ebx), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
     }
@@ -540,9 +539,9 @@ mod test {
         let expected = "(ECmp  (EAnd  rax, rax), 0x0)\
         (EEq  of, 0x0)\
         (EEq  sf, (ELsr  (ECmp  (EAnd  rax, rax), 0x0), (ESub  0x40, 0x1)))\
-        (EEq  zf, (ECmp  0x0, (EAnd  (ECmp  (EAnd  rax, rax), 0x0), 0xFFFFFFFFFFFFFFFF)))\
+        (EEq  zf, (EXor  0x1, (EAnd  (ECmp  (EAnd  rax, rax), 0x0), 0xFFFFFFFFFFFFFFFF)))\
         (EEq  cf, 0x0)\
-        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (ECmp  (EAnd  rax, rax), 0x0), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
+        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (ECmp  (EAnd  rax, rax), 0x0), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
     }
@@ -579,9 +578,9 @@ mod test {
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  eax, (EAdd  eax, cf)), (ESub  0x20, 0x1)))\
-                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF)))\
+                        (EEq  zf, (EXor  0x1, (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF)))\
                         (EEq  cf, (EGt  eax, (EAdd  eax, (EAdd  eax, cf))))\
-                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAdd  eax, (EAdd  eax, cf)), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
+                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
     }
@@ -596,9 +595,9 @@ mod test {
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  eax, (EAdd  eax, cf)), (ESub  0x20, 0x1)))\
-                        (EEq  zf, (ECmp  0x0, (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF)))\
+                        (EEq  zf, (EXor  0x1, (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF)))\
                         (EEq  cf, (EGt  eax, (EAdd  eax, (EAdd  eax, cf))))\
-                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAdd  eax, (EAdd  eax, cf)), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
+                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
         assert_eq!(parser.skip_esil_set, 1);

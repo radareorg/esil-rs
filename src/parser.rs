@@ -6,6 +6,7 @@
 // except according to those terms.
 
 use lexer::{Token, Tokenize};
+use lexer::USE_DEFAULT_SIZE;
 
 use std::fmt::Debug;
 use std::collections::{HashMap, VecDeque};
@@ -73,7 +74,7 @@ impl Parse for Parser {
             }
         }
 
-        while let Some(token) = self.tokens.as_mut().unwrap().pop_front() {
+        while let Some(mut token) = self.tokens.as_mut().unwrap().pop_front() {
             match token {
                 // Esil Internal Vars
                 Token::IZero(_) |
@@ -136,6 +137,17 @@ impl Parse for Parser {
                 // Invalid. Let the Evaluator decide what to do with it.
                 // Esil Opcodes. Return to the Evaluator.
                 _ => {
+                    // Handle default size for EPoke and EPeek.
+                    // _bit == 0 means esil-rs will use the default_size.
+                    match token {
+                        Token::EPeek(ref mut _bit) |
+                        Token::EPoke(ref mut _bit) => {
+                            if *_bit == USE_DEFAULT_SIZE {
+                                *_bit = self.default_size as u8;
+                            }
+                        }
+                        _ => {  }
+                    }
                     if self.skip_esil_set == 0 {
                         self.last_op = Some(token.clone());
                     } else {
@@ -165,7 +177,7 @@ impl Parse for Parser {
         } else if !t.is_implemented() {
             unimplemented!();
         } else {
-            panic!("Invalid esil opcode!");
+            panic!("Invalid esil opcode: {:?}!", t);
         };
 
         if self.skip_esil_set == 0 {

@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 
 const ESIL_INTERNAL_PREFIX: char = '$';
 const DEFAULT_SIZE: u8 = 64;
+pub const USE_DEFAULT_SIZE: u8 = 0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -236,14 +237,16 @@ impl Tokenize for Tokenizer {
                     "%=" => vec![Token::PCopy(1), Token::EMod, Token::PPop(1),
                     Token::EEq],
 
-                    "=[]" => vec![Token::EPoke(64)],
+                    "=[]" => vec![Token::EPoke(USE_DEFAULT_SIZE)],
                     "=[1]" => vec![Token::EPoke(8)],
                     "=[2]" => vec![Token::EPoke(16)],
                     "=[4]" => vec![Token::EPoke(32)],
                     "=[8]" => vec![Token::EPoke(64)],
 
-                    "|=[]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EOr,
-                    Token::PPop(1), Token::EPoke(64)],
+                    "|=[]" => vec![Token::PCopy(1),
+                    Token::EPeek(USE_DEFAULT_SIZE),
+                    Token::EOr, Token::PPop(1),
+                    Token::EPoke(USE_DEFAULT_SIZE)],
                     "|=[1]" => vec![Token::PCopy(1), Token::EPeek(8), Token::EOr,
                     Token::PPop(1), Token::EPoke(8)],
                     "|=[2]" => vec![Token::PCopy(1), Token::EPeek(16), Token::EOr,
@@ -253,8 +256,10 @@ impl Tokenize for Tokenizer {
                     "|=[8]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EOr,
                     Token::PPop(1), Token::EPoke(64)],
 
-                    "^=[]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EXor,
-                    Token::PPop(1), Token::EPoke(64)],
+                    "^=[]" => vec![Token::PCopy(1),
+                    Token::EPeek(USE_DEFAULT_SIZE),
+                    Token::EXor, Token::PPop(1),
+                    Token::EPoke(USE_DEFAULT_SIZE)],
                     "^=[1]" => vec![Token::PCopy(1), Token::EPeek(8), Token::EXor,
                     Token::PPop(1), Token::EPoke(8)],
                     "^=[2]" => vec![Token::PCopy(1), Token::EPeek(16), Token::EXor,
@@ -264,8 +269,10 @@ impl Tokenize for Tokenizer {
                     "^=[8]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EXor,
                     Token::PPop(1), Token::EPoke(64)],
 
-                    "&=[]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EAnd,
-                    Token::PPop(1), Token::EPoke(64)],
+                    "&=[]" => vec![Token::PCopy(1),
+                    Token::EPeek(USE_DEFAULT_SIZE),
+                    Token::EAnd, Token::PPop(1),
+                    Token::EPoke(USE_DEFAULT_SIZE)],
                     "&=[1]" => vec![Token::PCopy(1), Token::EPeek(8), Token::EAnd,
                     Token::PPop(1), Token::EPoke(8)],
                     "&=[2]" => vec![Token::PCopy(1), Token::EPeek(16), Token::EAnd,
@@ -275,8 +282,10 @@ impl Tokenize for Tokenizer {
                     "&=[8]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EAnd,
                     Token::PPop(1), Token::EPoke(64)],
 
-                    "+=[]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EAdd,
-                    Token::PPop(1), Token::EPoke(64)],
+                    "+=[]" => vec![Token::PCopy(1),
+                    Token::EPeek(USE_DEFAULT_SIZE),
+                    Token::EAdd, Token::PPop(1),
+                    Token::EPoke(USE_DEFAULT_SIZE)],
                     "+=[1]" => vec![Token::PCopy(1), Token::EPeek(8), Token::EAdd,
                     Token::PPop(1), Token::EPoke(8)],
                     "+=[2]" => vec![Token::PCopy(1), Token::EPeek(16), Token::EAdd,
@@ -286,8 +295,10 @@ impl Tokenize for Tokenizer {
                     "+=[8]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EAdd,
                     Token::PPop(1), Token::EPoke(64)],
 
-                    "-=[]" => vec![Token::PCopy(1), Token::EPeek(64), Token::ESub,
-                    Token::PPop(1), Token::EPoke(64)],
+                    "-=[]" => vec![Token::PCopy(1),
+                    Token::EPeek(USE_DEFAULT_SIZE),
+                    Token::ESub, Token::PPop(1),
+                    Token::EPoke(USE_DEFAULT_SIZE)],
                     "-=[1]" => vec![Token::PCopy(1), Token::EPeek(8), Token::ESub,
                     Token::PPop(1), Token::EPoke(8)],
                     "-=[2]" => vec![Token::PCopy(1), Token::EPeek(16), Token::ESub,
@@ -297,8 +308,10 @@ impl Tokenize for Tokenizer {
                     "-=[8]" => vec![Token::PCopy(1), Token::EPeek(64), Token::ESub,
                     Token::PPop(1), Token::EPoke(64)],
 
-                    "%=[]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EMod,
-                    Token::PPop(1), Token::EPoke(64)],
+                    "%=[]" => vec![Token::PCopy(1),
+                    Token::EPeek(USE_DEFAULT_SIZE),
+                    Token::EMod, Token::PPop(1),
+                    Token::EPoke(USE_DEFAULT_SIZE)],
                     "%=[1]" => vec![Token::PCopy(1), Token::EPeek(8), Token::EMod,
                     Token::PPop(1), Token::EPoke(8)],
                     "%=[2]" => vec![Token::PCopy(1), Token::EPeek(16), Token::EMod,
@@ -308,8 +321,10 @@ impl Tokenize for Tokenizer {
                     "%=[8]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EMod,
                     Token::PPop(1), Token::EPoke(64)],
 
-                    "/=[]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EDiv,
-                    Token::PPop(1), Token::EPoke(64)],
+                    "/=[]" => vec![Token::PCopy(1),
+                    Token::EPeek(USE_DEFAULT_SIZE),
+                    Token::EDiv, Token::PPop(1),
+                    Token::EPoke(USE_DEFAULT_SIZE)],
                     "/=[1]" => vec![Token::PCopy(1), Token::EPeek(8), Token::EDiv,
                     Token::PPop(1), Token::EPoke(8)],
                     "/=[2]" => vec![Token::PCopy(1), Token::EPeek(16), Token::EDiv,
@@ -319,8 +334,10 @@ impl Tokenize for Tokenizer {
                     "/=[8]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EDiv,
                     Token::PPop(1), Token::EPoke(64)],
 
-                    "*=[]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EMul,
-                    Token::PPop(1), Token::EPoke(64)],
+                    "*=[]" => vec![Token::PCopy(1),
+                    Token::EPeek(USE_DEFAULT_SIZE),
+                    Token::EMul, Token::PPop(1),
+                    Token::EPoke(USE_DEFAULT_SIZE)],
                     "*=[1]" => vec![Token::PCopy(1), Token::EPeek(8), Token::EMul,
                     Token::PPop(1), Token::EPoke(8)],
                     "*=[2]" => vec![Token::PCopy(1), Token::EPeek(16), Token::EMul,
@@ -330,9 +347,11 @@ impl Tokenize for Tokenizer {
                     "*=[8]" => vec![Token::PCopy(1), Token::EPeek(64), Token::EMul,
                     Token::PPop(1), Token::EPoke(64)],
 
-                    "++=[]" => vec![Token::PCopy(1), Token::EPeek(64),
-                    Token::PCopy(1), Token::EPop, Token::EConstant(1), Token::PPop(1), Token::EAdd,
-                    Token::PPop(1), Token::EPoke(64)],
+                    "++=[]" => vec![Token::PCopy(1),
+                    Token::EPeek(USE_DEFAULT_SIZE),
+                    Token::PCopy(1), Token::EPop, Token::EConstant(1),
+                    Token::PPop(1), Token::EAdd, Token::PPop(1),
+                    Token::EPoke(USE_DEFAULT_SIZE)],
                     "++=[1]" => vec![Token::PCopy(1), Token::EPeek(8),
                     Token::PCopy(1), Token::EPop, Token::EConstant(1), Token::PPop(1), Token::EAdd,
                     Token::PPop(1), Token::EPoke(8)],
@@ -346,9 +365,11 @@ impl Tokenize for Tokenizer {
                     Token::PCopy(1), Token::EPop, Token::EConstant(1), Token::PPop(1), Token::EAdd,
                     Token::PPop(1), Token::EPoke(64)],
 
-                    "--=[]" => vec![Token::PCopy(1), Token::EPeek(64),
-                    Token::PCopy(1), Token::EPop, Token::EConstant(1), Token::PPop(1), Token::ESub,
-                    Token::PPop(1), Token::EPoke(64)],
+                    "--=[]" => vec![Token::PCopy(1),
+                    Token::EPeek(USE_DEFAULT_SIZE),
+                    Token::PCopy(1), Token::EPop, Token::EConstant(1),
+                    Token::PPop(1), Token::ESub, Token::PPop(1),
+                    Token::EPoke(USE_DEFAULT_SIZE)],
                     "--=[1]" => vec![Token::PCopy(1), Token::EPeek(8),
                     Token::PCopy(1), Token::EPop, Token::EConstant(1), Token::PPop(1), Token::ESub,
                     Token::PPop(1), Token::EPoke(8)],
@@ -362,7 +383,7 @@ impl Tokenize for Tokenizer {
                     Token::PCopy(1), Token::EPop, Token::EConstant(1), Token::PPop(1), Token::ESub,
                     Token::PPop(1), Token::EPoke(64)],
 
-                    "[]" => vec![Token::EPeek(64)],
+                    "[]" => vec![Token::EPeek(USE_DEFAULT_SIZE)],
                     "[*]" => vec![Token::EPeek(64)],
                     "=[*]" => vec![Token::EPoke(64)],
                     "[1]" => vec![Token::EPeek(8)],

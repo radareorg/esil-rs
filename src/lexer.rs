@@ -114,6 +114,7 @@ impl Token {
             Token::EIf |
             Token::EPeek(_) |
             Token::EInterrupt |
+            Token::EGoto |
             Token::ETrap => true,
             _ => false,
         }
@@ -128,7 +129,6 @@ impl Token {
 
     pub fn is_implemented(&self) -> bool {
         match *self {
-            Token::EGoto |
             Token::EUnimplemented => false,
             _ => true,
         }
@@ -149,6 +149,7 @@ impl Token {
             match *self {
                 Token::EEq |
                 Token::EPoke(_) |
+                Token::EGoto |
                 Token::EInterrupt |
                 Token::ETrap => false,
                 _ => true,

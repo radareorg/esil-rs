@@ -34,6 +34,12 @@ pub struct Parser {
     pub eold_: Option<Token>,
     pub ecur: Option<Token>,
     pub lastsz: Option<Token>,
+    // Allow access for the consumer to stack, updated by EDump.
+    // The meaning of pstack's value are as follows:
+    //      None: parser hasn't met a STACK opcode
+    //      Some(vec![]): At the point of meeting STACK, the stack is empty
+    //      Some(vec![...]): Normal cases
+    pub pstack: Option<Vec<Token>>,
 }
 
 pub trait Parse {
@@ -49,6 +55,8 @@ pub trait Parse {
                       -> (Option<Self::OutType>, Option<Self::OutType>);
 
     fn push(&mut self, t: Self::InType);
+
+    fn dump(&self) -> Option<&Vec<Self::OutType>>;
 }
 
 impl Parse for Parser {
@@ -134,6 +142,13 @@ impl Parse for Parser {
                     let top = self.stack.last().cloned().unwrap();
                     self.push(top);
                 }
+                Token::EDump => {
+                    self.pstack = Some(self.stack.clone());
+                }
+                Token::EClear => {
+                    self.stack.clear();
+                    self.tstack.clear();
+                }
                 // Invalid. Let the Evaluator decide what to do with it.
                 // Esil Opcodes. Return to the Evaluator.
                 _ => {
@@ -165,6 +180,10 @@ impl Parse for Parser {
 
     fn push(&mut self, t: Self::InType) {
         self.stack.push(t);
+    }
+
+    fn dump(&self) -> Option<&Vec<Self::OutType>> {
+        self.pstack.as_ref()
     }
 
     fn fetch_operands(&mut self, t: &Token) -> (Option<Token>, Option<Token>) {
@@ -229,6 +248,7 @@ impl Parser {
             eold_: None,
             ecur: None,
             lastsz: None,
+            pstack: None,
         }
     }
 
@@ -413,9 +433,25 @@ mod test {
         regset.insert("rax".to_owned(), 64);
         regset.insert("rbx".to_owned(), 64);
         regset.insert("rcx".to_owned(), 64);
+        regset.insert("rsp".to_owned(), 64);
         regset.insert("eax".to_owned(), 32);
         regset.insert("ebx".to_owned(), 32);
         regset.insert("ecx".to_owned(), 32);
+        regset.insert("esp".to_owned(), 32);
+        regset.insert("zf".to_owned(), 1);
+        regset.insert("pf".to_owned(), 1);
+        regset.insert("cf".to_owned(), 1);
+        regset.insert("of".to_owned(), 1);
+        regset.insert("sf".to_owned(), 1);
+        regset
+    }
+
+    fn sample_regset_32() -> HashMap<String, u64> {
+        let mut regset = HashMap::new();
+        regset.insert("eax".to_owned(), 32);
+        regset.insert("ebx".to_owned(), 32);
+        regset.insert("ecx".to_owned(), 32);
+        regset.insert("esp".to_owned(), 32);
         regset.insert("zf".to_owned(), 1);
         regset.insert("pf".to_owned(), 1);
         regset.insert("cf".to_owned(), 1);
@@ -507,7 +543,7 @@ mod test {
     }
 
     #[test]
-    fn parser_x86_add64() {
+    fn parser_x64_add64() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr = ExpressionConstructor::run("rbx,rax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c63,cf,=,$p,pf,=",
@@ -524,7 +560,7 @@ mod test {
     }
 
     #[test]
-    fn parser_x86_add32() {
+    fn parser_x64_add32() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr = ExpressionConstructor::run("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
@@ -541,7 +577,48 @@ mod test {
     }
 
     #[test]
-    fn parser_x86_cmp() {
+    fn parser_x86_add32() {
+        let regset = sample_regset_32();
+        let mut parser = Parser::init(Some(regset), Some(32));
+        let expr = ExpressionConstructor::run("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+                                              Some(&mut parser));
+
+        let expected = "(EEq  eax, (EAdd  eax, ebx))\
+                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), ebx), (EXor  (EAdd  eax, ebx), eax)), 0x1F), 0x1), 0x1))\
+                        (EEq  sf, (ELsr  (EAdd  eax, ebx), (ESub  0x20, 0x1)))\
+                        (EEq  zf, (EXor  0x1, (EAnd  (EAdd  eax, ebx), 0xFFFFFFFF)))\
+                        (EEq  cf, (EGt  eax, (EAdd  eax, ebx)))\
+                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, ebx), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
+
+        assert_eq!(expected, &expr);
+    }
+
+    #[test]
+    fn parser_x86_pop32() {
+        let regset = sample_regset_32();
+        let mut parser = Parser::init(Some(regset), Some(32));
+        let expr = ExpressionConstructor::run("esp,[],eax,=,4,esp,+=", Some(&mut parser));
+
+        let expected = "(EEq  eax, (EPeek(32)  esp, -))\
+                        (EEq  esp, (EAdd  esp, 0x4))";
+
+        assert_eq!(expected, &expr);
+    }
+
+    #[test]
+    fn parser_x64_pop64() {
+        let regset = sample_regset();
+        let mut parser = Parser::init(Some(regset), Some(64));
+        let expr = ExpressionConstructor::run("rsp,[],rax,=,8,rsp,+=", Some(&mut parser));
+
+        let expected = "(EEq  rax, (EPeek(64)  rsp, -))\
+                        (EEq  rsp, (EAdd  rsp, 0x8))";
+
+        assert_eq!(expected, &expr);
+    }
+
+    #[test]
+    fn parser_x64_cmp() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr =
@@ -580,7 +657,7 @@ mod test {
     }
 
     #[test]
-    fn parser_x86_adc() {
+    fn parser_x64_adc() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr =
@@ -595,6 +672,37 @@ mod test {
                         (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
+    }
+
+    #[test]
+    fn parser_stack() {
+        let regset = sample_regset();
+        let mut parser = Parser::init(Some(regset), Some(64));
+        ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=,STACK",
+                                    Some(&mut parser));
+
+        let expected = Some(vec![Token::EIdentifier("(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))".to_owned()),
+                            Token::EIdentifier("(EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), \
+                            (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))".to_owned()),
+                            Token::EIdentifier("(EEq  sf, (ELsr  (EAdd  eax, (EAdd  eax, cf)), (ESub  0x20, 0x1)))".to_owned()),
+                            Token::EIdentifier("(EEq  zf, (EXor  0x1, (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF)))".to_owned()),
+                            Token::EIdentifier("(EEq  cf, (EGt  eax, (EAdd  eax, (EAdd  eax, cf))))".to_owned()),
+                            Token::EIdentifier("(EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, \
+                            (EAdd  eax, cf)), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))".to_owned())]);
+
+        assert_eq!(expected.as_ref(), parser.dump());
+    }
+
+    #[test]
+    fn parser_clear() {
+        let regset = sample_regset();
+        let mut parser = Parser::init(Some(regset), Some(64));
+        ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=,CLEAR,STACK",
+                                    Some(&mut parser));
+
+        let expected = Some(vec![]);
+
+        assert_eq!(expected.as_ref(), parser.dump());
     }
 
     #[test]

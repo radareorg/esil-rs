@@ -47,7 +47,7 @@ pub enum Token {
     EDup,
     ETrap,
     // Invalid
-    EInvalid,
+    EInvalid(String),
     // Parser Instructions.
     PCopy(usize),
     PPop(usize),
@@ -79,6 +79,8 @@ pub enum Token {
     ECur,
     ELastsz,
     EAddress,
+    // Placeholder for unimplemented opcode
+    EUnimplemented,
 }
 
 impl Token {
@@ -107,7 +109,12 @@ impl Token {
 
     pub fn is_unary(&self) -> bool {
         match *self {
-            Token::EPop | Token::ENeg | Token::EIf | Token::EPeek(_) => true,
+            Token::EPop |
+            Token::ENeg |
+            Token::EIf |
+            Token::EPeek(_) |
+            Token::EInterrupt |
+            Token::ETrap => true,
             _ => false,
         }
     }
@@ -121,16 +128,13 @@ impl Token {
 
     pub fn is_implemented(&self) -> bool {
         match *self {
-            Token::ETodo |
-            Token::EInterrupt |
             Token::EGoto |
-            Token::EBreak |
-            Token::EClear |
-            Token::ETrap => false,
+            Token::EUnimplemented => false,
             _ => true,
         }
     }
 
+    // Tokens which will set internal variables' value
     pub fn should_set_vars(&self) -> bool {
         match *self {
             Token::ECmp | Token::EEq | Token::EPoke(_) | Token::EGt | Token::ELt => true,
@@ -138,11 +142,15 @@ impl Token {
         }
     }
 
+    // Tokens which will update result
     pub fn updates_result(&self) -> bool {
-        // If it an operator
+        // If it an operator or a functional opcode
         if self.is_binary() || self.is_unary() || self.is_arity_zero() {
             match *self {
-                Token::EEq | Token::EPoke(_) => false,
+                Token::EEq |
+                Token::EPoke(_) |
+                Token::EInterrupt |
+                Token::ETrap => false,
                 _ => true,
             }
         } else {
@@ -394,6 +402,7 @@ impl Tokenize for Tokenizer {
                     "STACK" => vec![Token::EDump],
                     "POP" => vec![Token::EPop],
                     "TODO" => vec![Token::ETodo],
+                    "LOOP" => vec![Token::EConstant(0), Token::EGoto],
                     "GOTO" => vec![Token::EGoto],
                     "BREAK" => vec![Token::EBreak],
                     "CLEAR" => vec![Token::EClear],
@@ -420,14 +429,14 @@ impl Tokenize for Tokenizer {
                                     if let Ok(num) = t[1..].parse::<u64>() {
                                         vec![Token::IConstant(num)]
                                     } else {
-                                        vec![Token::EInvalid]
+                                        vec![Token::EInvalid(t.to_owned())]
                                     }
                                 }
                             }
                         } else if t.starts_with("0x") {
                             match u64::from_str_radix(t.trim_left_matches("0x"), 16) {
                                 Ok(v) => vec![Token::EConstant(v)],
-                                Err(_) => vec![Token::EInvalid],
+                                Err(_) => vec![Token::EInvalid(t.to_owned())],
                             }
                         } else if let Ok(v) = t.parse::<i64>() {
                             vec![Token::EConstant(v as u64)]

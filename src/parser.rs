@@ -27,16 +27,27 @@ pub struct Parser {
     last_op: Option<Token>,
     // Last two pop operations performed by the consumer.
     last_pop: (Option<Token>, Option<Token>),
+    // Meta data of parser
     eold: Option<Token>,
     eold_: Option<Token>,
     ecur: Option<Token>,
     lastsz: Option<Token>,
+    // stack dumped by "STACK"
     pstack: Option<Vec<Token>>,
 }
 
 pub trait Parse {
 	type InType: Clone + Debug + PartialEq;
 	type OutType: Clone + Debug;
+
+    // XXX: Used as a placeholder, without any effect. 
+    // Parse Function should be implemented as "parse" in super trait 
+    fn parse_<S, T>(&mut self, S) -> Option<Self::OutType>
+        where S: AsRef<str> + Copy,
+              T: Tokenize<Token = Self::InType>
+    {
+        None
+    }
 
     fn fetch_operands(&mut self,
                       t: &Self::InType)
@@ -427,6 +438,22 @@ impl DyParse for Parser {
     }
 }
 
+// Parser used for static analysis, taking radeco-lib for example.
+pub trait StParse: Parse + Debug + Clone {
+    fn parse<S, T>(&mut self, S) -> Option<<Self as Parse>::OutType>
+        where S: AsRef<str> + Copy,
+              T: Tokenize<Token = <Self as Parse>::InType>;
+}
+
+impl StParse for Parser {
+    fn parse<S, T>(&mut self, esil: S) -> Option<Self::OutType>
+        where S: AsRef<str> + Copy,
+              T: Tokenize<Token = Self::InType>
+    {
+        self.base_parse::<S, T>(esil, None) 
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -451,9 +478,34 @@ mod test {
             }
         }
 
-        pub fn run<T, P>(esil: T, p: &mut P) -> String 
+        pub fn dyrun<T, P>(esil: T, p: &mut P) -> String 
             where T: AsRef<str>,
                   P: DyParse<InType = Token, OutType = Token>
+        {
+            p.set_meta(Token::ELastsz, Some(Token::EConstant(64)));
+            let mut expression = String::new();
+            while let Some(ref token) = p.parse::<_, Tokenizer>(&esil) {
+                let (lhs, rhs) = p.fetch_operands(token);
+                let lhs = ExpressionConstructor::get_inner_or_null(lhs);
+                let rhs = ExpressionConstructor::get_inner_or_null(rhs);
+                expression = format!("({:?}  {}, {})", token, lhs, rhs);
+                p.push(Token::EIdentifier(expression.clone()));
+            }
+
+            expression.clear();
+            let mut p_ = p.clone();
+            p_.parse::<_, Tokenizer>(&"STACK");
+            for expr in p_.dump().unwrap_or(&vec![]) {
+                if let &Token::EIdentifier(ref s) = expr {
+                    expression.push_str(s);
+                }
+            }
+            expression
+        }
+
+        pub fn strun<T, P>(esil: T, p: &mut P) -> String 
+            where T: AsRef<str>,
+                  P: StParse<InType = Token, OutType = Token>
         {
             p.set_meta(Token::ELastsz, Some(Token::EConstant(64)));
             let mut expression = String::new();
@@ -509,80 +561,96 @@ mod test {
         regset
     }
 
-    macro_rules! construct {
+    macro_rules! dyconstruct {
         ($s: expr) => {
-            ExpressionConstructor::run($s, &mut Parser::init(None, None))
+            ExpressionConstructor::dyrun($s, &mut Parser::init(None, None))
+        }
+    }
+
+    macro_rules! stconstruct {
+        ($s: expr) => {
+            ExpressionConstructor::strun($s, &mut Parser::init(None, None))
         }
     }
 
     #[test]
     fn parser_basic_1() {
-        let expression = construct!("6,rax,+=");
-        assert_eq!("(EEq  rax, (EAdd  rax, 0x6))", expression);
+        assert_eq!("(EEq  rax, (EAdd  rax, 0x6))", dyconstruct!("6,rax,+="));
+        assert_eq!("(EEq  rax, (EAdd  rax, 0x6))", stconstruct!("6,rax,+="));
     }
 
     #[test]
     fn parser_zf() {
-        let expression = construct!("$z,zf,=");
         assert_eq!("(EEq  zf, (EXor  0x1, (EAnd  rax_cur, 0xFFFFFFFFFFFFFFFF)))",
-                   expression);
+                   dyconstruct!("$z,zf,="));
+        assert_eq!("(EEq  zf, (EXor  0x1, (EAnd  rax_cur, 0xFFFFFFFFFFFFFFFF)))",
+                   stconstruct!("$z,zf,="));
     }
 
     #[test]
     fn parser_pf() {
-        let expression = construct!("$p,pf,=");
-        assert_eq!("(EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  rax_cur, 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))", expression);
+        assert_eq!("(EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  rax_cur, 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))", dyconstruct!("$p,pf,="));
+        assert_eq!("(EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  rax_cur, 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))", stconstruct!("$p,pf,="));
     }
 
     #[test]
     fn parser_cf() {
-        let expression = construct!("$c64,cf,=");
-        let expected = "(EEq  cf, (EGt  rax_old, rax_cur))";
-        assert_eq!(expected, expression);
+        assert_eq!("(EEq  cf, (EGt  rax_old, rax_cur))", dyconstruct!("$c64,cf,="));
+        assert_eq!("(EEq  cf, (EGt  rax_old, rax_cur))", stconstruct!("$c64,cf,="));
     }
 
     #[test]
     fn parser_of() {
         // of = ((((~eold ^ eold_) & (enew ^ eold)) >> (lastsz - 1)) & 1) == 1
-        let expression = construct!("$o,of,=");
+        let dy_expression = dyconstruct!("$o,of,=");
+        let st_expression = stconstruct!("$o,of,=");
         let expected = "(EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  rax_old, -), rbx_old), (EXor  rax_cur, rax_old)), 0x3F), 0x1), 0x1))";
-        assert_eq!(expected, expression);
+        assert_eq!(expected, dy_expression);
+        assert_eq!(expected, st_expression);
     }
 
     #[test]
     fn parser_bf() {
-        let expression = construct!("$b64,cf,=");
+        let dy_expression = dyconstruct!("$b64,cf,=");
+        let st_expression = stconstruct!("$b64,cf,=");
         let expected = "(EEq  cf, (ELt  rax_old, rax_cur))";
-        assert_eq!(expected, expression);
+        assert_eq!(expected, dy_expression);
+        assert_eq!(expected, st_expression);
     }
 
     #[test]
     fn parser_composite_1() {
-        assert_eq!("(EEq  rax, (ESub  rax, 0x1))", construct!("rax,--="));
+        assert_eq!("(EEq  rax, (ESub  rax, 0x1))", dyconstruct!("rax,--="));
+        assert_eq!("(EEq  rax, (ESub  rax, 0x1))", stconstruct!("rax,--="));
     }
 
     #[test]
     fn parser_composite_2() {
         assert_eq!("(EPoke(64)  0x800, (EAnd  (EPeek(64)  0x800, -), rax))",
-                   construct!("rax,0x800,&=[8]"));
+                   dyconstruct!("rax,0x800,&=[8]"));
+        assert_eq!("(EPoke(64)  0x800, (EAnd  (EPeek(64)  0x800, -), rax))",
+                   stconstruct!("rax,0x800,&=[8]"));
     }
 
     #[test]
     fn parser_composite_3() {
         assert_eq!("(EPoke(64)  0x800, (ESub  (EPeek(64)  0x800, -), 0x1))",
-                   construct!("0x800,--=[8]"));
+                   dyconstruct!("0x800,--=[8]"));
+        assert_eq!("(EPoke(64)  0x800, (ESub  (EPeek(64)  0x800, -), 0x1))",
+                   stconstruct!("0x800,--=[8]"));
     }
 
     #[test]
     fn parser_composite_4() {
-        assert_eq!("(EEq  rax, (EAdd  rax, 0x1))", construct!("rax,++="));
+        assert_eq!("(EEq  rax, (EAdd  rax, 0x1))", dyconstruct!("rax,++="));
+        assert_eq!("(EEq  rax, (EAdd  rax, 0x1))", stconstruct!("rax,++="));
     }
 
     #[test]
     fn parser_test_esil_vars() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("rbx,rax,+=,$0,cf,=", &mut parser);
+        let expr = ExpressionConstructor::dyrun("rbx,rax,+=,$0,cf,=", &mut parser);
         assert_eq!(parser.eold, Some(Token::EIdentifier("rax".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rbx".to_owned())));
         assert_eq!(parser.ecur,
@@ -595,7 +663,7 @@ mod test {
     fn parser_x64_add64() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("rbx,rax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c63,cf,=,$p,pf,=", 
+        let expr = ExpressionConstructor::dyrun("rbx,rax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c63,cf,=,$p,pf,=", 
                                               &mut parser);
 
         let expected = "(EEq  rax, (EAdd  rax, rbx))\
@@ -612,7 +680,7 @@ mod test {
     fn parser_x64_add32() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+        let expr = ExpressionConstructor::dyrun("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
                                               &mut parser);
 
         let expected = "(EEq  eax, (EAdd  eax, ebx))\
@@ -629,7 +697,7 @@ mod test {
     fn parser_x86_add32() {
         let regset = sample_regset_32();
         let mut parser = Parser::init(Some(regset), Some(32));
-        let expr = ExpressionConstructor::run("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+        let expr = ExpressionConstructor::dyrun("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
                                               &mut parser);
 
         let expected = "(EEq  eax, (EAdd  eax, ebx))\
@@ -646,7 +714,7 @@ mod test {
     fn parser_x86_pop32() {
         let regset = sample_regset_32();
         let mut parser = Parser::init(Some(regset), Some(32));
-        let expr = ExpressionConstructor::run("esp,[],eax,=,4,esp,+=", &mut parser);
+        let expr = ExpressionConstructor::dyrun("esp,[],eax,=,4,esp,+=", &mut parser);
 
         let expected = "(EEq  eax, (EPeek(32)  esp, -))\
                         (EEq  esp, (EAdd  esp, 0x4))";
@@ -658,7 +726,7 @@ mod test {
     fn parser_x64_pop64() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("rsp,[],rax,=,8,rsp,+=", &mut parser);
+        let expr = ExpressionConstructor::dyrun("rsp,[],rax,=,8,rsp,+=", &mut parser);
 
         let expected = "(EEq  rax, (EPeek(64)  rsp, -))\
                         (EEq  rsp, (EAdd  rsp, 0x8))";
@@ -671,7 +739,7 @@ mod test {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr =
-            ExpressionConstructor::run("0,rax,rax,&,==,$0,of,=,$s,sf,=,$z,zf,=,$0,cf,=,$p,pf,=",
+            ExpressionConstructor::dyrun("0,rax,rax,&,==,$0,of,=,$s,sf,=,$z,zf,=,$0,cf,=,$p,pf,=",
                                        &mut parser);
 
         let expected = "(ECmp  (EAnd  rax, rax), 0x0)\
@@ -688,7 +756,7 @@ mod test {
     fn parser_lt_gt() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let _expr = ExpressionConstructor::run("rax,rbx,<", &mut parser);
+        let _expr = ExpressionConstructor::dyrun("rax,rbx,<", &mut parser);
 
         assert_eq!(parser.eold, Some(Token::EIdentifier("rbx".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rax".to_owned())));
@@ -696,7 +764,7 @@ mod test {
                    Some(Token::EIdentifier("(ELt  rbx, rax)".to_owned())));
         assert_eq!(parser.lastsz, Some(Token::EConstant(64)));
 
-        let _expr = ExpressionConstructor::run("rbx,rax,>", &mut parser);
+        let _expr = ExpressionConstructor::dyrun("rbx,rax,>", &mut parser);
 
         assert_eq!(parser.eold, Some(Token::EIdentifier("rax".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rbx".to_owned())));
@@ -710,7 +778,7 @@ mod test {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr =
-            ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+            ExpressionConstructor::dyrun("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
                                        &mut parser);
 
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
@@ -727,7 +795,7 @@ mod test {
     fn parser_stack() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=,STACK",
+        ExpressionConstructor::dyrun("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=,STACK",
                                     &mut parser);
 
         let expected = Some(vec![Token::EIdentifier("(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))".to_owned()),
@@ -746,7 +814,7 @@ mod test {
     fn parser_clear() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=,CLEAR,STACK",
+        ExpressionConstructor::dyrun("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=,CLEAR,STACK",
                                     &mut parser);
 
         let expected = Some(vec![]);
@@ -758,7 +826,7 @@ mod test {
     fn parser_multiple_insts() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+        let expr = ExpressionConstructor::dyrun("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
                                        &mut parser);
 
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
@@ -771,7 +839,7 @@ mod test {
         assert_eq!(expected, &expr);
         assert_eq!(parser.skip_esil_set, 1);
 
-        let _ = ExpressionConstructor::run("rax,rbx,-=,$0,cf,=", &mut parser);
+        let _ = ExpressionConstructor::dyrun("rax,rbx,-=,$0,cf,=", &mut parser);
         assert_eq!(parser.eold, Some(Token::EIdentifier("rbx".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rax".to_owned())));
         assert_eq!(parser.ecur, Some(Token::EIdentifier("(ESub  rbx, rax)".to_owned())));

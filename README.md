@@ -1,5 +1,6 @@
 # esil.rs
-[![Build Status](https://travis-ci.org/radare/esil-rs.svg)](https://travis-ci.org/sushant94/esil-rs)
+[![Build Status](https://travis-ci.org/radare/esil-rs.svg)](https://travis-ci.org/radare/esil-rs)
+[![Build status](https://ci.appveyor.com/api/projects/status/7mawhhr97nhb17vs?svg=true)](https://ci.appveyor.com/project/radare/esil-rs)
 [![Coverage Status](https://coveralls.io/repos/github/radare/esil-rs/badge.svg?branch=master)](https://coveralls.io/github/radare/esil-rs?branch=master)
 
 An ESIL Toolchain written in rust. For more information on ESIL, its usage and

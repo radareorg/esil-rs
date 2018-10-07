@@ -4,7 +4,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/radare/esil-rs/badge.svg?branch=master)](https://coveralls.io/github/radare/esil-rs?branch=master)
 
 An ESIL Toolchain written in rust. For more information on ESIL, its usage and
-semantics, please check [documentation](https://github.com/radare/radare2book/blob/master/esil.md).
+semantics, please check [documentation](https://github.com/radare/radare2book/blob/master/disassembling/esil.md).
 
 ## Design
 

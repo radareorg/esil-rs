@@ -6,6 +6,7 @@
 // except according to those terms.
 
 use lexer::{Token, Tokenize};
+use lexer::USE_DEFAULT_SIZE;
 
 use std::fmt::Debug;
 use std::collections::{HashMap, VecDeque};
@@ -26,40 +27,166 @@ pub struct Parser {
     last_op: Option<Token>,
     // Last two pop operations performed by the consumer.
     last_pop: (Option<Token>, Option<Token>),
-    // Allow access for the consumer to set these. If these are set, then the parser automatically
-    // returns the value of old, cur and lastsz when required rather than returning the tokens to
-    // indicate the same.
-    pub eold: Option<Token>,
-    pub eold_: Option<Token>,
-    pub ecur: Option<Token>,
-    pub lastsz: Option<Token>,
+    // Meta data of parser
+    eold: Option<Token>,
+    eold_: Option<Token>,
+    ecur: Option<Token>,
+    lastsz: Option<Token>,
+    // stack dumped by "STACK"
+    pstack: Option<Vec<Token>>,
 }
 
 pub trait Parse {
 	type InType: Clone + Debug + PartialEq;
 	type OutType: Clone + Debug;
 
-    fn parse<S, T>(&mut self, S) -> Option<Self::OutType>
-        where S: AsRef<str>,
-              T: Tokenize<Token = Self::InType>;
+    // XXX: Used as a placeholder, without any effect. 
+    // Parse Function should be implemented as "parse" in super trait 
+    fn parse_<S, T>(&mut self, S) -> Option<Self::OutType>
+        where S: AsRef<str> + Copy,
+              T: Tokenize<Token = Self::InType>
+    {
+        None
+    }
 
     fn fetch_operands(&mut self,
                       t: &Self::InType)
                       -> (Option<Self::OutType>, Option<Self::OutType>);
 
     fn push(&mut self, t: Self::InType);
+
+    // Allow access for the consumer to stack, updated by EDump.
+    // The meaning of pstack's value are as follows:
+    //      None: parser hasn't met a STACK opcode
+    //      Some(vec![]): At the point of meeting STACK, the stack is empty
+    //      Some(vec![...]): Normal cases
+    fn dump(&self) -> Option<&Vec<Self::OutType>>;
+
+    // Allow access for the consumer to set these. If these are set, then the parser automatically
+    // returns the value of old, cur and lastsz when required rather than returning the tokens to
+    // indicate the same.
+    fn get_meta(&self, t: Self::InType) -> Self::OutType;
+
+    fn set_meta(&mut self, t: Self::InType, v: Option<Self::InType>);
 }
 
 impl Parse for Parser {
     type InType = Token;
     type OutType = Token;
 
-    fn parse<S, T>(&mut self, esil: S) -> Option<Self::OutType>
+    fn push(&mut self, t: Token) {
+        self.stack.push(t);
+    }
+
+    fn dump(&self) -> Option<&Vec<Token>> {
+        self.pstack.as_ref()
+    }
+
+    fn fetch_operands(&mut self, t: &Token) -> (Option<Token>, Option<Token>) {
+        let result = if t.is_binary() {
+            (self.pop_op(), self.pop_op())
+        } else if t.is_unary() {
+            (self.pop_op(), None)
+        } else if t.is_arity_zero() {
+            (None, None)
+        } else if !t.is_implemented() {
+            unimplemented!();
+        } else {
+            panic!("Invalid esil opcode: {:?}!", t);
+        };
+
+        if self.skip_esil_set == 0 {
+            if t.should_set_vars() {
+                // For ECmp, last_pop should be the operands we to the ECmp.
+                if t.updates_result() {
+                    self.last_pop = result.clone();
+                }
+                self.eold = self.last_pop.0.clone();
+                self.eold_ = self.last_pop.1.clone();
+                if !t.updates_result() {
+                    self.ecur = result.1.clone();
+                }
+                self.lastsz = Some(Token::EConstant(match self.eold {
+                    None => self.default_size,
+                    Some(Token::EIdentifier(ref s)) => {
+                        if let Some(ref map) = self.ident_map {
+                            map.get(s).cloned().unwrap_or(self.default_size)
+                        } else {
+                            self.default_size
+                        }
+                    }
+                    Some(Token::EConstant(_)) => self.default_size,
+                    Some(Token::EEntry(_, n)) => n.unwrap_or(self.default_size),
+                    _ => unreachable!(),
+                }));
+            } else {
+                self.last_pop = result.clone();
+            }
+        }
+
+        result
+    }
+
+    fn get_meta(&self, t: Token) -> Token {
+        match t {
+            Token::EOld => self.eold.as_ref().unwrap_or(&t),
+            Token::EOld_ => self.eold_.as_ref().unwrap_or(&t),
+            Token::ECur => self.ecur.as_ref().unwrap_or(&t),
+            Token::ELastsz => self.lastsz.as_ref().unwrap_or(&t),
+            _ => panic!("Improper usage of function."),
+        }
+        .clone()
+    }
+
+    fn set_meta(&mut self, t: Token, v: Option<Token>) {
+        match t {
+            Token::EOld => self.eold = v,
+            Token::EOld_ => self.eold_ = v,
+            Token::ECur => self.ecur = v,
+            Token::ELastsz => self.lastsz = v,
+            _ => panic!("Improper usage of function."),
+        }
+        .clone()
+    }
+}
+ 
+// Implementation of the parser where the input type is lexer::Token
+impl Parser {
+    pub fn init(ident_map: Option<HashMap<String, u64>>, default_size: Option<u64>) -> Parser {
+        Parser {
+            stack: Vec::new(),
+            tstack: Vec::new(),
+            ident_map: ident_map,
+            skip_esil_set: 0,
+            default_size: default_size.unwrap_or(64),
+            last_op: None,
+            last_pop: (None, None),
+            tokens: None,
+            eold: None,
+            eold_: None,
+            ecur: None,
+            lastsz: None,
+            pstack: None,
+        }
+    }
+
+    fn base_parse<S, T>(&mut self, esil: S, goto: Option<Token>) -> Option<Token>
         where S: AsRef<str>,
-              T: Tokenize<Token = Self::InType>
+              T: Tokenize<Token = Token>
     {
         // TODO: Add notes about mechanism.
-        if self.tokens.is_none() {
+
+        // We use goto to update status of parser in _dynamical_ evaluator
+        // XXX: In static analysis, it is not necessary to update status by EGoto
+        // TODO: distinguish different usages in static and dynamic analysis
+        if let Some(token_) = goto {
+            if let Token::EConstant(step) = token_ {
+                self.skip_esil_set = 0;
+                self.tokens = Some(T::tokenize(esil).split_off(step as usize));
+            } else {
+                panic!("Invalid token for GOTO opcode: {:?}!", token_);
+            }
+        } else if self.tokens.is_none() {
             self.skip_esil_set = 0;
             self.tokens = Some(T::tokenize(esil));
         }
@@ -73,7 +200,7 @@ impl Parse for Parser {
             }
         }
 
-        while let Some(token) = self.tokens.as_mut().unwrap().pop_front() {
+        while let Some(mut token) = self.tokens.as_mut().unwrap().pop_front() {
             match token {
                 // Esil Internal Vars
                 Token::IZero(_) |
@@ -133,9 +260,27 @@ impl Parse for Parser {
                     let top = self.stack.last().cloned().unwrap();
                     self.push(top);
                 }
+                Token::EDump => {
+                    self.pstack = Some(self.stack.clone());
+                }
+                Token::EClear => {
+                    self.stack.clear();
+                    self.tstack.clear();
+                }
                 // Invalid. Let the Evaluator decide what to do with it.
                 // Esil Opcodes. Return to the Evaluator.
                 _ => {
+                    // Handle default size for EPoke and EPeek.
+                    // _bit == 0 means esil-rs will use the default_size.
+                    match token {
+                        Token::EPeek(ref mut _bit) |
+                        Token::EPoke(ref mut _bit) => {
+                            if *_bit == USE_DEFAULT_SIZE {
+                                *_bit = self.default_size as u8;
+                            }
+                        }
+                        _ => {  }
+                    }
                     if self.skip_esil_set == 0 {
                         self.last_op = Some(token.clone());
                     } else {
@@ -149,86 +294,6 @@ impl Parse for Parser {
         // to be processed. So we set tokens to None and return None.
         self.tokens = None;
         None
-    }
-
-    fn push(&mut self, t: Self::InType) {
-        self.stack.push(t);
-    }
-
-    fn fetch_operands(&mut self, t: &Token) -> (Option<Token>, Option<Token>) {
-        let result = if t.is_binary() {
-            (self.pop_op(), self.pop_op())
-        } else if t.is_unary() {
-            (self.pop_op(), None)
-        } else if t.is_arity_zero() {
-            (None, None)
-        } else if !t.is_implemented() {
-            unimplemented!();
-        } else {
-            panic!("Invalid esil opcode!");
-        };
-
-        if self.skip_esil_set == 0 {
-            if t.should_set_vars() {
-                // For ECmp, last_pop should be the operands we to the ECmp.
-                if t.updates_result() {
-                    self.last_pop = result.clone();
-                }
-                self.eold = self.last_pop.0.clone();
-                self.eold_ = self.last_pop.1.clone();
-                if !t.updates_result() {
-                    self.ecur = result.1.clone();
-                }
-                self.lastsz = Some(Token::EConstant(match self.eold {
-                    None => self.default_size,
-                    Some(Token::EIdentifier(ref s)) => {
-                        if let Some(ref map) = self.ident_map {
-                            map.get(s).cloned().unwrap_or(self.default_size)
-                        } else {
-                            self.default_size
-                        }
-                    }
-                    Some(Token::EConstant(_)) => self.default_size,
-                    Some(Token::EEntry(_, n)) => n.unwrap_or(self.default_size),
-                    _ => unreachable!(),
-                }));
-            } else {
-                self.last_pop = result.clone();
-            }
-        }
-
-        result
-    }
-}
-
-// Implementation of the parser where the input type is lexer::Token
-impl Parser {
-    pub fn init(ident_map: Option<HashMap<String, u64>>, default_size: Option<u64>) -> Parser {
-        Parser {
-            stack: Vec::new(),
-            tstack: Vec::new(),
-            ident_map: ident_map,
-            skip_esil_set: 0,
-            default_size: default_size.unwrap_or(64),
-            last_op: None,
-            last_pop: (None, None),
-            tokens: None,
-            eold: None,
-            eold_: None,
-            ecur: None,
-            lastsz: None,
-        }
-    }
-
-    fn get_meta(&self, t: Token) -> Token {
-        match t {
-            Token::EOld => self.eold.as_ref().unwrap_or(&t),
-            Token::EOld_ => self.eold_.as_ref().unwrap_or(&t),
-            Token::ECur => self.ecur.as_ref().unwrap_or(&t),
-            Token::ELastsz => self.lastsz.as_ref().unwrap_or(&t),
-            _ => panic!("Improper usage of function."),
-        }
-        .clone()
     }
 
     fn evaluate_internal(&mut self, t: &Token) -> VecDeque<Token> {
@@ -349,6 +414,46 @@ impl Parser {
     }
 }
 
+// Parser used for dynamic analysis, taking ESIL-VM for example.
+pub trait DyParse: Parse + Debug + Clone {
+    fn parse<S, T>(&mut self, S) -> Option<<Self as Parse>::OutType>
+        where S: AsRef<str> + Copy,
+              T: Tokenize<Token = <Self as Parse>::InType>;
+}
+
+impl DyParse for Parser {
+    fn parse<S, T>(&mut self, esil: S) -> Option<Self::OutType>
+        where S: AsRef<str> + Copy,
+              T: Tokenize<Token = Self::InType>
+    {
+        let mut goto = None;
+        while let Some(token) = self.base_parse::<S, T>(esil, goto) {
+            if token == Token::EGoto {
+                goto = self.fetch_operands(&token).0
+            } else {
+                return Some(token);
+            }
+        }
+        None
+    }
+}
+
+// Parser used for static analysis, taking radeco-lib for example.
+pub trait StParse: Parse + Debug + Clone {
+    fn parse<S, T>(&mut self, S) -> Option<<Self as Parse>::OutType>
+        where S: AsRef<str> + Copy,
+              T: Tokenize<Token = <Self as Parse>::InType>;
+}
+
+impl StParse for Parser {
+    fn parse<S, T>(&mut self, esil: S) -> Option<Self::OutType>
+        where S: AsRef<str> + Copy,
+              T: Tokenize<Token = Self::InType>
+    {
+        self.base_parse::<S, T>(esil, None) 
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -373,10 +478,11 @@ mod test {
             }
         }
 
-        pub fn run<T: AsRef<str>>(esil: T, parser: Option<&mut Parser>) -> String {
-            let mut pp = Parser::init(None, None);
-            let p = parser.unwrap_or(&mut pp);
-            p.lastsz = Some(Token::EConstant(64));
+        pub fn dyrun<T, P>(esil: T, p: &mut P) -> String 
+            where T: AsRef<str>,
+                  P: DyParse<InType = Token, OutType = Token>
+        {
+            p.set_meta(Token::ELastsz, Some(Token::EConstant(64)));
             let mut expression = String::new();
             while let Some(ref token) = p.parse::<_, Tokenizer>(&esil) {
                 let (lhs, rhs) = p.fetch_operands(token);
@@ -387,7 +493,34 @@ mod test {
             }
 
             expression.clear();
-            for expr in &p.stack {
+            let mut p_ = p.clone();
+            p_.parse::<_, Tokenizer>(&"STACK");
+            for expr in p_.dump().unwrap_or(&vec![]) {
+                if let &Token::EIdentifier(ref s) = expr {
+                    expression.push_str(s);
+                }
+            }
+            expression
+        }
+
+        pub fn strun<T, P>(esil: T, p: &mut P) -> String 
+            where T: AsRef<str>,
+                  P: StParse<InType = Token, OutType = Token>
+        {
+            p.set_meta(Token::ELastsz, Some(Token::EConstant(64)));
+            let mut expression = String::new();
+            while let Some(ref token) = p.parse::<_, Tokenizer>(&esil) {
+                let (lhs, rhs) = p.fetch_operands(token);
+                let lhs = ExpressionConstructor::get_inner_or_null(lhs);
+                let rhs = ExpressionConstructor::get_inner_or_null(rhs);
+                expression = format!("({:?}  {}, {})", token, lhs, rhs);
+                p.push(Token::EIdentifier(expression.clone()));
+            }
+
+            expression.clear();
+            let mut p_ = p.clone();
+            p_.parse::<_, Tokenizer>(&"STACK");
+            for expr in p_.dump().unwrap_or(&vec![]) {
                 if let &Token::EIdentifier(ref s) = expr {
                     expression.push_str(s);
                 }
@@ -401,9 +534,11 @@ mod test {
         regset.insert("rax".to_owned(), 64);
         regset.insert("rbx".to_owned(), 64);
         regset.insert("rcx".to_owned(), 64);
+        regset.insert("rsp".to_owned(), 64);
         regset.insert("eax".to_owned(), 32);
         regset.insert("ebx".to_owned(), 32);
         regset.insert("ecx".to_owned(), 32);
+        regset.insert("esp".to_owned(), 32);
         regset.insert("zf".to_owned(), 1);
         regset.insert("pf".to_owned(), 1);
         regset.insert("cf".to_owned(), 1);
@@ -412,80 +547,110 @@ mod test {
         regset
     }
 
-    macro_rules! construct {
+    fn sample_regset_32() -> HashMap<String, u64> {
+        let mut regset = HashMap::new();
+        regset.insert("eax".to_owned(), 32);
+        regset.insert("ebx".to_owned(), 32);
+        regset.insert("ecx".to_owned(), 32);
+        regset.insert("esp".to_owned(), 32);
+        regset.insert("zf".to_owned(), 1);
+        regset.insert("pf".to_owned(), 1);
+        regset.insert("cf".to_owned(), 1);
+        regset.insert("of".to_owned(), 1);
+        regset.insert("sf".to_owned(), 1);
+        regset
+    }
+
+    macro_rules! dyconstruct {
         ($s: expr) => {
-            ExpressionConstructor::run($s, None)
+            ExpressionConstructor::dyrun($s, &mut Parser::init(None, None))
+        }
+    }
+
+    macro_rules! stconstruct {
+        ($s: expr) => {
+            ExpressionConstructor::strun($s, &mut Parser::init(None, None))
         }
     }
 
     #[test]
     fn parser_basic_1() {
-        let expression = construct!("6,rax,+=");
-        assert_eq!("(EEq  rax, (EAdd  rax, 0x6))", expression);
+        assert_eq!("(EEq  rax, (EAdd  rax, 0x6))", dyconstruct!("6,rax,+="));
+        assert_eq!("(EEq  rax, (EAdd  rax, 0x6))", stconstruct!("6,rax,+="));
     }
 
     #[test]
     fn parser_zf() {
-        let expression = construct!("$z,zf,=");
         assert_eq!("(EEq  zf, (EXor  0x1, (EAnd  rax_cur, 0xFFFFFFFFFFFFFFFF)))",
-                   expression);
+                   dyconstruct!("$z,zf,="));
+        assert_eq!("(EEq  zf, (EXor  0x1, (EAnd  rax_cur, 0xFFFFFFFFFFFFFFFF)))",
+                   stconstruct!("$z,zf,="));
     }
 
     #[test]
     fn parser_pf() {
-        let expression = construct!("$p,pf,=");
-        assert_eq!("(EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  rax_cur, 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))", expression);
+        assert_eq!("(EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  rax_cur, 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))", dyconstruct!("$p,pf,="));
+        assert_eq!("(EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  rax_cur, 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))", stconstruct!("$p,pf,="));
     }
 
     #[test]
     fn parser_cf() {
-        let expression = construct!("$c64,cf,=");
-        let expected = "(EEq  cf, (EGt  rax_old, rax_cur))";
-        assert_eq!(expected, expression);
+        assert_eq!("(EEq  cf, (EGt  rax_old, rax_cur))", dyconstruct!("$c64,cf,="));
+        assert_eq!("(EEq  cf, (EGt  rax_old, rax_cur))", stconstruct!("$c64,cf,="));
     }
 
     #[test]
     fn parser_of() {
         // of = ((((~eold ^ eold_) & (enew ^ eold)) >> (lastsz - 1)) & 1) == 1
-        let expression = construct!("$o,of,=");
+        let dy_expression = dyconstruct!("$o,of,=");
+        let st_expression = stconstruct!("$o,of,=");
         let expected = "(EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  rax_old, -), rbx_old), (EXor  rax_cur, rax_old)), 0x3F), 0x1), 0x1))";
-        assert_eq!(expected, expression);
+        assert_eq!(expected, dy_expression);
+        assert_eq!(expected, st_expression);
     }
 
     #[test]
     fn parser_bf() {
-        let expression = construct!("$b64,cf,=");
+        let dy_expression = dyconstruct!("$b64,cf,=");
+        let st_expression = stconstruct!("$b64,cf,=");
         let expected = "(EEq  cf, (ELt  rax_old, rax_cur))";
-        assert_eq!(expected, expression);
+        assert_eq!(expected, dy_expression);
+        assert_eq!(expected, st_expression);
     }
 
     #[test]
     fn parser_composite_1() {
-        assert_eq!("(EEq  rax, (ESub  rax, 0x1))", construct!("rax,--="));
+        assert_eq!("(EEq  rax, (ESub  rax, 0x1))", dyconstruct!("rax,--="));
+        assert_eq!("(EEq  rax, (ESub  rax, 0x1))", stconstruct!("rax,--="));
     }
 
     #[test]
     fn parser_composite_2() {
         assert_eq!("(EPoke(64)  0x800, (EAnd  (EPeek(64)  0x800, -), rax))",
-                   construct!("rax,0x800,&=[8]"));
+                   dyconstruct!("rax,0x800,&=[8]"));
+        assert_eq!("(EPoke(64)  0x800, (EAnd  (EPeek(64)  0x800, -), rax))",
+                   stconstruct!("rax,0x800,&=[8]"));
     }
 
     #[test]
     fn parser_composite_3() {
         assert_eq!("(EPoke(64)  0x800, (ESub  (EPeek(64)  0x800, -), 0x1))",
-                   construct!("0x800,--=[8]"));
+                   dyconstruct!("0x800,--=[8]"));
+        assert_eq!("(EPoke(64)  0x800, (ESub  (EPeek(64)  0x800, -), 0x1))",
+                   stconstruct!("0x800,--=[8]"));
     }
 
     #[test]
     fn parser_composite_4() {
-        assert_eq!("(EEq  rax, (EAdd  rax, 0x1))", construct!("rax,++="));
+        assert_eq!("(EEq  rax, (EAdd  rax, 0x1))", dyconstruct!("rax,++="));
+        assert_eq!("(EEq  rax, (EAdd  rax, 0x1))", stconstruct!("rax,++="));
     }
 
     #[test]
     fn parser_test_esil_vars() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("rbx,rax,+=,$0,cf,=", Some(&mut parser));
+        let expr = ExpressionConstructor::dyrun("rbx,rax,+=,$0,cf,=", &mut parser);
         assert_eq!(parser.eold, Some(Token::EIdentifier("rax".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rbx".to_owned())));
         assert_eq!(parser.ecur,
@@ -495,11 +660,11 @@ mod test {
     }
 
     #[test]
-    fn parser_x86_add64() {
+    fn parser_x64_add64() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("rbx,rax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c63,cf,=,$p,pf,=",
-                                              Some(&mut parser));
+        let expr = ExpressionConstructor::dyrun("rbx,rax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c63,cf,=,$p,pf,=", 
+                                              &mut parser);
 
         let expected = "(EEq  rax, (EAdd  rax, rbx))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  rax, -), rbx), (EXor  (EAdd  rax, rbx), rax)), 0x3F), 0x1), 0x1))\
@@ -512,11 +677,11 @@ mod test {
     }
 
     #[test]
-    fn parser_x86_add32() {
+    fn parser_x64_add32() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
-                                              Some(&mut parser));
+        let expr = ExpressionConstructor::dyrun("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+                                              &mut parser);
 
         let expected = "(EEq  eax, (EAdd  eax, ebx))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), ebx), (EXor  (EAdd  eax, ebx), eax)), 0x1F), 0x1), 0x1))\
@@ -529,12 +694,53 @@ mod test {
     }
 
     #[test]
-    fn parser_x86_cmp() {
+    fn parser_x86_add32() {
+        let regset = sample_regset_32();
+        let mut parser = Parser::init(Some(regset), Some(32));
+        let expr = ExpressionConstructor::dyrun("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+                                              &mut parser);
+
+        let expected = "(EEq  eax, (EAdd  eax, ebx))\
+                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), ebx), (EXor  (EAdd  eax, ebx), eax)), 0x1F), 0x1), 0x1))\
+                        (EEq  sf, (ELsr  (EAdd  eax, ebx), (ESub  0x20, 0x1)))\
+                        (EEq  zf, (EXor  0x1, (EAnd  (EAdd  eax, ebx), 0xFFFFFFFF)))\
+                        (EEq  cf, (EGt  eax, (EAdd  eax, ebx)))\
+                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, ebx), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
+
+        assert_eq!(expected, &expr);
+    }
+
+    #[test]
+    fn parser_x86_pop32() {
+        let regset = sample_regset_32();
+        let mut parser = Parser::init(Some(regset), Some(32));
+        let expr = ExpressionConstructor::dyrun("esp,[],eax,=,4,esp,+=", &mut parser);
+
+        let expected = "(EEq  eax, (EPeek(32)  esp, -))\
+                        (EEq  esp, (EAdd  esp, 0x4))";
+
+        assert_eq!(expected, &expr);
+    }
+
+    #[test]
+    fn parser_x64_pop64() {
+        let regset = sample_regset();
+        let mut parser = Parser::init(Some(regset), Some(64));
+        let expr = ExpressionConstructor::dyrun("rsp,[],rax,=,8,rsp,+=", &mut parser);
+
+        let expected = "(EEq  rax, (EPeek(64)  rsp, -))\
+                        (EEq  rsp, (EAdd  rsp, 0x8))";
+
+        assert_eq!(expected, &expr);
+    }
+
+    #[test]
+    fn parser_x64_cmp() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr =
-            ExpressionConstructor::run("0,rax,rax,&,==,$0,of,=,$s,sf,=,$z,zf,=,$0,cf,=,$p,pf,=",
-                                       Some(&mut parser));
+            ExpressionConstructor::dyrun("0,rax,rax,&,==,$0,of,=,$s,sf,=,$z,zf,=,$0,cf,=,$p,pf,=",
+                                       &mut parser);
 
         let expected = "(ECmp  (EAnd  rax, rax), 0x0)\
         (EEq  of, 0x0)\
@@ -550,7 +756,7 @@ mod test {
     fn parser_lt_gt() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let _expr = ExpressionConstructor::run("rax,rbx,<", Some(&mut parser));
+        let _expr = ExpressionConstructor::dyrun("rax,rbx,<", &mut parser);
 
         assert_eq!(parser.eold, Some(Token::EIdentifier("rbx".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rax".to_owned())));
@@ -558,7 +764,7 @@ mod test {
                    Some(Token::EIdentifier("(ELt  rbx, rax)".to_owned())));
         assert_eq!(parser.lastsz, Some(Token::EConstant(64)));
 
-        let _expr = ExpressionConstructor::run("rbx,rax,>", Some(&mut parser));
+        let _expr = ExpressionConstructor::dyrun("rbx,rax,>", &mut parser);
 
         assert_eq!(parser.eold, Some(Token::EIdentifier("rax".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rbx".to_owned())));
@@ -568,12 +774,12 @@ mod test {
     }
 
     #[test]
-    fn parser_x86_adc() {
+    fn parser_x64_adc() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr =
-            ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
-                                       Some(&mut parser));
+            ExpressionConstructor::dyrun("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+                                       &mut parser);
 
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
@@ -586,11 +792,42 @@ mod test {
     }
 
     #[test]
+    fn parser_stack() {
+        let regset = sample_regset();
+        let mut parser = Parser::init(Some(regset), Some(64));
+        ExpressionConstructor::dyrun("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=,STACK",
+                                    &mut parser);
+
+        let expected = Some(vec![Token::EIdentifier("(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))".to_owned()),
+                            Token::EIdentifier("(EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), \
+                            (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))".to_owned()),
+                            Token::EIdentifier("(EEq  sf, (ELsr  (EAdd  eax, (EAdd  eax, cf)), (ESub  0x20, 0x1)))".to_owned()),
+                            Token::EIdentifier("(EEq  zf, (EXor  0x1, (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF)))".to_owned()),
+                            Token::EIdentifier("(EEq  cf, (EGt  eax, (EAdd  eax, (EAdd  eax, cf))))".to_owned()),
+                            Token::EIdentifier("(EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, \
+                            (EAdd  eax, cf)), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))".to_owned())]);
+
+        assert_eq!(expected.as_ref(), parser.dump());
+    }
+
+    #[test]
+    fn parser_clear() {
+        let regset = sample_regset();
+        let mut parser = Parser::init(Some(regset), Some(64));
+        ExpressionConstructor::dyrun("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=,CLEAR,STACK",
+                                    &mut parser);
+
+        let expected = Some(vec![]);
+
+        assert_eq!(expected.as_ref(), parser.dump());
+    }
+
+    #[test]
     fn parser_multiple_insts() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
-                                       Some(&mut parser));
+        let expr = ExpressionConstructor::dyrun("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
+                                       &mut parser);
 
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
@@ -602,7 +839,7 @@ mod test {
         assert_eq!(expected, &expr);
         assert_eq!(parser.skip_esil_set, 1);
 
-        let _ = ExpressionConstructor::run("rax,rbx,-=,$0,cf,=", Some(&mut parser));
+        let _ = ExpressionConstructor::dyrun("rax,rbx,-=,$0,cf,=", &mut parser);
         assert_eq!(parser.eold, Some(Token::EIdentifier("rbx".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rax".to_owned())));
         assert_eq!(parser.ecur, Some(Token::EIdentifier("(ESub  rbx, rax)".to_owned())));
@@ -617,5 +854,39 @@ mod test {
     #[test]
     fn parser_follow_true() {
         // TODO
+    }
+
+    #[test]
+    fn parser_goto() {
+        let mut p = Parser::init(None, None);
+        p.lastsz = Some(Token::EConstant(64));
+
+        // Following ESIL str does not make sense, which is only built for test.
+        let esil = "1,2,3,STACK,1,GOTO";
+        let out = p.base_parse::<_, Tokenizer>(&esil, None);
+        assert_ne!(None, out);
+        let ref token = out.unwrap();
+        assert_eq!(&Token::EGoto, token);
+        let (lhs, rhs) = p.fetch_operands(token);
+        assert_eq!(lhs, Some(Token::EConstant(1)));
+        assert_eq!(rhs, None);
+        let mut expected = Some(vec![Token::EConstant(1),
+                                     Token::EConstant(2),
+                                     Token::EConstant(3)]);
+        assert_eq!(expected.as_ref(), p.dump());
+
+        let out = p.base_parse::<_, Tokenizer>(&esil, lhs);
+        assert_ne!(None, out);
+        let ref token = out.unwrap();
+        assert_eq!(&Token::EGoto, token);
+        let (lhs, rhs) = p.fetch_operands(token);
+        assert_eq!(lhs, Some(Token::EConstant(1)));
+        assert_eq!(rhs, None);
+        expected = Some(vec![Token::EConstant(1),
+                             Token::EConstant(2),
+                             Token::EConstant(3),
+                             Token::EConstant(2),
+                             Token::EConstant(3)]);
+        assert_eq!(expected.as_ref(), p.dump());
     }
 }

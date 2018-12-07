@@ -99,6 +99,7 @@ impl Parse for Parser {
                 Token::EOld |
                 Token::EOld_ |
                 Token::ELastsz |
+                Token::EAddress |
                 Token::EEntry(_, _) => {
                     self.push(token);
                 }
@@ -160,7 +161,7 @@ impl Parse for Parser {
             (self.pop_op(), self.pop_op())
         } else if t.is_unary() {
             (self.pop_op(), None)
-        } else if t.is_arity_zero() {
+        } else if t.is_arity_zero() || t.is_meta() {
             (None, None)
         } else if !t.is_implemented() {
             unimplemented!();
@@ -248,8 +249,8 @@ impl Parser {
         let esil_old_ = self.get_meta(Token::EOld_);
         let esil_cur = self.get_meta(Token::ECur);
         let lastsz = match self.get_meta(Token::ELastsz) {
-            Token::ELastsz => panic!("lastsz unset!"),
-            Token::EConstant(size) => size,
+            Token::ELastsz => None,
+            Token::EConstant(size) => Some(size),
             _ => panic!("lastsz cannot be something other than a constant!"),
         };
 
@@ -258,7 +259,7 @@ impl Parser {
         // tokens that will be returned from the parser to the consumer.
         match *t {
             Token::IZero(_) => {
-                result.extend(genmask(lastsz).iter().cloned());
+                result.extend(genmask(lastsz.expect("lastsz unset!")).iter().cloned());
                 result.extend([esil_cur, Token::EAnd, Token::EConstant(1), Token::EXor]
                                   .iter()
                                   .cloned());
@@ -293,7 +294,7 @@ impl Parser {
                 // of = ((((~eold ^ eold_) & (enew ^ eold)) >> (lastsz - 1)) & 1) == 1
                 result.extend([Token::EConstant(1),
                                Token::EConstant(1),
-                               Token::EConstant(lastsz - 1),
+                               Token::EConstant(lastsz.expect("lastsz unset!") - 1),
                                esil_old.clone(),
                                esil_cur,
                                Token::EXor,

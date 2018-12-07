@@ -130,6 +130,17 @@ impl Token {
         }
     }
 
+    pub fn is_meta(&self) -> bool {
+        match *self {
+            Token::EOld |
+            Token::EOld_ |
+            Token::ECur |
+            Token::ELastsz |
+            Token::EAddress => true,
+            _ => false,
+        }
+    }
+
     pub fn should_set_vars(&self) -> bool {
         match *self {
             Token::ECmp | Token::EEq | Token::EPoke(_) | Token::EGt | Token::ELt => true,

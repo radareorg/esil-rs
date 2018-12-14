@@ -276,9 +276,9 @@ impl Parser {
         let genmask = |bit: u64| {
             // ( 1 << bit ) - 1
             if bit == 64 {
-                [Token::EConstant(u64::max_value())]
+                u64::max_value()
             } else {
-                [Token::EConstant((1 << bit) - 1)]
+                (1 << bit) - 1
             }
         };
 
@@ -297,15 +297,23 @@ impl Parser {
         // tokens that will be returned from the parser to the consumer.
         match *t {
             Token::IZero(_) => {
-                result.extend(genmask(lastsz.expect("lastsz unset!")).iter().cloned());
-                result.extend([esil_cur, Token::EAnd, Token::EConstant(1), Token::EXor]
-                                  .iter()
-                                  .cloned());
+                result.extend([Token::EConstant(genmask(lastsz.expect("lastsz unset!"))),
+                               esil_cur,
+                               Token::EAnd,
+                               Token::EConstant(1),
+                               Token::EXor].iter().cloned());
                 self.skip_esil_set = 4;
             }
             Token::ICarry(_bit) => {
-                result.extend([esil_cur, esil_old, Token::EGt].iter().cloned());
-                self.skip_esil_set = 3;
+                let bit: u64 = u64::from(_bit)+1;
+                result.extend([Token::EConstant(genmask(bit)),
+                               esil_old,
+                               Token::EAnd,
+                               Token::EConstant(genmask(bit)),
+                               esil_cur,
+                               Token::EAnd,
+                               Token::ELt].iter().cloned());
+                self.skip_esil_set = 5;
             }
             Token::IParity(_) => {
                 // Parity flag computation as described in:
@@ -328,16 +336,25 @@ impl Parser {
                                   .cloned());
                 self.skip_esil_set = 7;
             }
-            Token::IOverflow(_bit) => {
+            Token::IOverflow(_) => {
                 // of = ((((~eold ^ eold_) & (enew ^ eold)) >> (lastsz - 1)) & 1) == 1
+                let lastsz = lastsz.expect("lastsz unset!");
                 result.extend([Token::EConstant(1),
                                Token::EConstant(1),
-                               Token::EConstant(lastsz.expect("lastsz unset!") - 1),
+                               Token::EConstant(lastsz - 1),
+                               Token::EConstant(genmask(lastsz)),
                                esil_old.clone(),
+                               Token::EAnd,
+                               Token::EConstant(genmask(lastsz)),
                                esil_cur,
+                               Token::EAnd,
                                Token::EXor,
+                               Token::EConstant(genmask(lastsz)),
                                esil_old_,
+                               Token::EAnd,
+                               Token::EConstant(genmask(lastsz)),
                                esil_old.clone(),
+                               Token::EAnd,
                                Token::ENeg,
                                Token::EXor,
                                Token::EAnd,
@@ -346,7 +363,7 @@ impl Parser {
                                Token::ECmp]
                                   .iter()
                                   .cloned());
-                self.skip_esil_set = 9;
+                self.skip_esil_set = 13;
             }
             Token::ISign(_) => {
                 result.extend([Token::EConstant(1),
@@ -359,8 +376,15 @@ impl Parser {
                 self.skip_esil_set = 4;
             }
             Token::IBorrow(_bit) => {
-                result.extend([esil_cur, esil_old, Token::ELt].iter().cloned());
-                self.skip_esil_set = 3;
+                let bit: u64 = _bit.into();
+                result.extend([Token::EConstant(genmask(bit)),
+                               esil_cur,
+                               Token::EAnd,
+                               Token::EConstant(genmask(bit)),
+                               esil_old,
+                               Token::EAnd,
+                               Token::ELt].iter().cloned());
+                self.skip_esil_set = 5;
             }
             Token::ISize(_) => {
                 result.push_front(Token::EConstant(self.default_size));
@@ -486,8 +510,15 @@ mod test {
 
     #[test]
     fn parser_cf() {
-        let expression = construct!("$c64,cf,=");
-        let expected = "(EEq  cf, (EGt  rax_old, rax_cur))";
+        let expression = construct!("$c63,cf,=");
+        let expected = "(EEq  cf, (ELt  (EAnd  rax_cur, 0xFFFFFFFFFFFFFFFF), (EAnd  rax_old, 0xFFFFFFFFFFFFFFFF)))";
+        assert_eq!(expected, expression);
+    }
+
+    #[test]
+    fn parser_cf2() {
+        let expression = construct!("$c31,cf,=");
+        let expected = "(EEq  cf, (ELt  (EAnd  rax_cur, 0xFFFFFFFF), (EAnd  rax_old, 0xFFFFFFFF)))";
         assert_eq!(expected, expression);
     }
 
@@ -495,14 +526,21 @@ mod test {
     fn parser_of() {
         // of = ((((~eold ^ eold_) & (enew ^ eold)) >> (lastsz - 1)) & 1) == 1
         let expression = construct!("$o,of,=");
-        let expected = "(EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  rax_old, -), rbx_old), (EXor  rax_cur, rax_old)), 0x3F), 0x1), 0x1))";
+        let expected = "(EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  (EAnd  rax_old, 0xFFFFFFFFFFFFFFFF), -), (EAnd  rbx_old, 0xFFFFFFFFFFFFFFFF)), (EXor  (EAnd  rax_cur, 0xFFFFFFFFFFFFFFFF), (EAnd  rax_old, 0xFFFFFFFFFFFFFFFF))), 0x3F), 0x1), 0x1))";
         assert_eq!(expected, expression);
     }
 
     #[test]
     fn parser_bf() {
         let expression = construct!("$b64,cf,=");
-        let expected = "(EEq  cf, (ELt  rax_old, rax_cur))";
+        let expected = "(EEq  cf, (ELt  (EAnd  rax_old, 0xFFFFFFFFFFFFFFFF), (EAnd  rax_cur, 0xFFFFFFFFFFFFFFFF)))";
+        assert_eq!(expected, expression);
+    }
+
+    #[test]
+    fn parser_bf2() {
+        let expression = construct!("$b32,cf,=");
+        let expected = "(EEq  cf, (ELt  (EAnd  rax_old, 0xFFFFFFFF), (EAnd  rax_cur, 0xFFFFFFFF)))";
         assert_eq!(expected, expression);
     }
 
@@ -549,10 +587,10 @@ mod test {
                                               Some(&mut parser)).unwrap();
 
         let expected = "(EEq  rax, (EAdd  rax, rbx))\
-                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  rax, -), rbx), (EXor  (EAdd  rax, rbx), rax)), 0x3F), 0x1), 0x1))\
+                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  (EAnd  rax, 0xFFFFFFFFFFFFFFFF), -), (EAnd  rbx, 0xFFFFFFFFFFFFFFFF)), (EXor  (EAnd  (EAdd  rax, rbx), 0xFFFFFFFFFFFFFFFF), (EAnd  rax, 0xFFFFFFFFFFFFFFFF))), 0x3F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  rax, rbx), (ESub  0x40, 0x1)))\
                         (EEq  zf, (EXor  0x1, (EAnd  (EAdd  rax, rbx), 0xFFFFFFFFFFFFFFFF)))\
-                        (EEq  cf, (EGt  rax, (EAdd  rax, rbx)))\
+                        (EEq  cf, (ELt  (EAnd  (EAdd  rax, rbx), 0xFFFFFFFFFFFFFFFF), (EAnd  rax, 0xFFFFFFFFFFFFFFFF)))\
                         (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  rax, rbx), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
@@ -564,12 +602,11 @@ mod test {
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr = ExpressionConstructor::run("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
                                               Some(&mut parser)).unwrap();
-
         let expected = "(EEq  eax, (EAdd  eax, ebx))\
-                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), ebx), (EXor  (EAdd  eax, ebx), eax)), 0x1F), 0x1), 0x1))\
+                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  (EAnd  eax, 0xFFFFFFFF), -), (EAnd  ebx, 0xFFFFFFFF)), (EXor  (EAnd  (EAdd  eax, ebx), 0xFFFFFFFF), (EAnd  eax, 0xFFFFFFFF))), 0x1F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  eax, ebx), (ESub  0x20, 0x1)))\
                         (EEq  zf, (EXor  0x1, (EAnd  (EAdd  eax, ebx), 0xFFFFFFFF)))\
-                        (EEq  cf, (EGt  eax, (EAdd  eax, ebx)))\
+                        (EEq  cf, (ELt  (EAnd  (EAdd  eax, ebx), 0xFFFFFFFF), (EAnd  eax, 0xFFFFFFFF)))\
                         (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, ebx), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
@@ -591,6 +628,23 @@ mod test {
         (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (ECmp  (EAnd  rax, rax), 0x0), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
+    }
+
+    #[test]
+    fn parser_x86_sub64() {
+        let regset = sample_regset();
+        let mut parser = Parser::init(Some(regset), Some(64));
+        let expr = ExpressionConstructor::run("rbx,rax,-=,$o,of,=,$s,sf,=,$z,zf,=,$b64,cf,=,$p,pf,=",
+                                              Some(&mut parser));
+
+        let expected = "(EEq  rax, (ESub  rax, rbx))\
+                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  (EAnd  rax, 0xFFFFFFFFFFFFFFFF), -), (EAnd  rbx, 0xFFFFFFFFFFFFFFFF)), (EXor  (EAnd  (ESub  rax, rbx), 0xFFFFFFFFFFFFFFFF), (EAnd  rax, 0xFFFFFFFFFFFFFFFF))), 0x3F), 0x1), 0x1))\
+                        (EEq  sf, (ELsr  (ESub  rax, rbx), (ESub  0x40, 0x1)))\
+                        (EEq  zf, (EXor  0x1, (EAnd  (ESub  rax, rbx), 0xFFFFFFFFFFFFFFFF)))\
+                        (EEq  cf, (ELt  (EAnd  rax, 0xFFFFFFFFFFFFFFFF), (EAnd  (ESub  rax, rbx), 0xFFFFFFFFFFFFFFFF)))\
+                        (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (ESub  rax, rbx), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
+
+        assert_eq!(expected, &expr.unwrap());
     }
 
     #[test]
@@ -623,10 +677,10 @@ mod test {
                                        Some(&mut parser)).unwrap();
 
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
-                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
+                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  (EAnd  eax, 0xFFFFFFFF), -), (EAnd  (EAdd  eax, cf), 0xFFFFFFFF)), (EXor  (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF), (EAnd  eax, 0xFFFFFFFF))), 0x1F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  eax, (EAdd  eax, cf)), (ESub  0x20, 0x1)))\
                         (EEq  zf, (EXor  0x1, (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF)))\
-                        (EEq  cf, (EGt  eax, (EAdd  eax, (EAdd  eax, cf))))\
+                        (EEq  cf, (ELt  (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF), (EAnd  eax, 0xFFFFFFFF)))\
                         (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);
@@ -640,10 +694,10 @@ mod test {
                                               Some(&mut parser)).unwrap();
 
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
-                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
+                        (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  (EAnd  eax, 0xFFFFFFFF), -), (EAnd  (EAdd  eax, cf), 0xFFFFFFFF)), (EXor  (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF), (EAnd  eax, 0xFFFFFFFF))), 0x1F), 0x1), 0x1))\
                         (EEq  sf, (ELsr  (EAdd  eax, (EAdd  eax, cf)), (ESub  0x20, 0x1)))\
                         (EEq  zf, (EXor  0x1, (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF)))\
-                        (EEq  cf, (EGt  eax, (EAdd  eax, (EAdd  eax, cf))))\
+                        (EEq  cf, (ELt  (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFFFFFFFF), (EAnd  eax, 0xFFFFFFFF)))\
                         (EEq  pf, (EAnd  (EMod  (EAnd  (EMul  (EAnd  (EAdd  eax, (EAdd  eax, cf)), 0xFF), 0x101010101010101), 0x8040201008040201), 0x1FF), 0x1))";
 
         assert_eq!(expected, &expr);

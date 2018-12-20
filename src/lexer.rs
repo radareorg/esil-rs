@@ -415,7 +415,7 @@ impl Tokenize for Tokenizer {
                                 }
                             }
                         } else if t.starts_with("0x") {
-                            match u64::from_str_radix(t.trim_left_matches("0x"), 16) {
+                            match u64::from_str_radix(t.trim_start_matches("0x"), 16) {
                                 Ok(v) => vec![Token::EConstant(v)],
                                 Err(_) => vec![Token::EInvalid],
                             }

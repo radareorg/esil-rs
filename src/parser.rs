@@ -19,6 +19,7 @@ pub enum ParserError {
     InvalidOpcode,
     InsufficientOperands,
     Unimplemented,
+    UnknownOperandSize,
 }
 
 impl ToString for ParserError {
@@ -32,6 +33,7 @@ impl ToString for ParserError {
             ParserError::InsufficientOperands => "Insufficient operands!".to_string(),
             ParserError::Unimplemented => "Unimplemented".to_string(),
             ParserError::InvalidDup => "Invalid use of EDup!".to_string(),
+            ParserError::UnknownOperandSize => "Unknown operand size".to_string(),
         }
     }
 }
@@ -114,7 +116,7 @@ impl Parse for Parser {
                 Token::ISize(_) |
                 Token::IConstant(_) |
                 Token::IAddress(_) => {
-                    let mut internal_q = self.evaluate_internal(&token);
+                    let mut internal_q = self.evaluate_internal(&token)?;
                     //self.skip_esil_set += internal_q.len() + 1;
                     while let Some(i) = internal_q.pop_back() {
                         // count the number of operations to skip for.
@@ -270,7 +272,7 @@ impl Parser {
         .clone()
     }
 
-    fn evaluate_internal(&mut self, t: &Token) -> VecDeque<Token> {
+    fn evaluate_internal(&mut self, t: &Token) -> Result<VecDeque<Token>, ParserError> {
         let mut result = VecDeque::new();
         // Set the lower most `bit` bits to 1.
         let genmask = |bit: u64| {
@@ -297,7 +299,12 @@ impl Parser {
         // tokens that will be returned from the parser to the consumer.
         match *t {
             Token::IZero(_) => {
-                result.extend([Token::EConstant(genmask(lastsz.expect("lastsz unset!"))),
+                let lastsz = match lastsz {
+                    Some(lastsz_) => lastsz_,
+                    None => return Err(ParserError::UnknownOperandSize),
+                };
+
+                result.extend([Token::EConstant(genmask(lastsz)),
                                esil_cur,
                                Token::EAnd,
                                Token::EConstant(1),
@@ -338,7 +345,11 @@ impl Parser {
             }
             Token::IOverflow(_) => {
                 // of = ((((~eold ^ eold_) & (enew ^ eold)) >> (lastsz - 1)) & 1) == 1
-                let lastsz = lastsz.expect("lastsz unset!");
+                let lastsz = match lastsz {
+                    Some(lastsz_) => lastsz_,
+                    None => return Err(ParserError::UnknownOperandSize),
+                };
+
                 result.extend([Token::EConstant(1),
                                Token::EConstant(1),
                                Token::EConstant(lastsz - 1),
@@ -400,7 +411,7 @@ impl Parser {
             }
             _ => unreachable!(),
         }
-        result
+        Ok(result)
     }
 
     fn pop_op(&mut self) -> Result<Option<Token>, ParserError> {

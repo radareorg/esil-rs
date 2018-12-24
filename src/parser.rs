@@ -10,6 +10,32 @@ use lexer::{Token, Tokenize};
 use std::fmt::Debug;
 use std::collections::{HashMap, VecDeque};
 
+/// Enumeration of errors that occur in the ESIL parser
+#[derive(Debug, Clone)]
+pub enum ParserError {
+    InvalidPop,
+    InvalidDup,
+    TooMany(Token),
+    InvalidOpcode,
+    InsufficientOperands,
+    Unimplemented,
+}
+
+impl ToString for ParserError {
+    fn to_string(&self) -> String {
+        match self {
+            ParserError::InvalidPop => "Invalid ESIL pop!".to_string(),
+            ParserError::TooMany(Token::PCopy(_)) => "Request to `PCopy` too many elements!".to_string(),
+            ParserError::TooMany(Token::PPop(_)) => "Request to `PPop` too many elements!".to_string(),
+            ParserError::TooMany(t) => format!("Request to `{:?}` too many elements!", t),
+            ParserError::InvalidOpcode => "Invalid ESIL opcode!".to_string(),
+            ParserError::InsufficientOperands => "Insufficient operands!".to_string(),
+            ParserError::Unimplemented => "Unimplemented".to_string(),
+            ParserError::InvalidDup => "Invalid use of EDup!".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Parser {
     stack: Vec<Token>,
@@ -36,16 +62,18 @@ pub struct Parser {
 }
 
 pub trait Parse {
-	type InType: Clone + Debug + PartialEq;
-	type OutType: Clone + Debug;
+    type InType: Clone + Debug + PartialEq;
+    type OutType: Clone + Debug;
+    type ParseError: ToString + Debug;
 
-    fn parse<S, T>(&mut self, S) -> Option<Self::OutType>
+    fn parse<S, T>(&mut self, S) -> Result<Option<Self::OutType>, Self::ParseError>
         where S: AsRef<str>,
               T: Tokenize<Token = Self::InType>;
 
     fn fetch_operands(&mut self,
                       t: &Self::InType)
-                      -> (Option<Self::OutType>, Option<Self::OutType>);
+                      -> Result<(Option<Self::OutType>, Option<Self::OutType>),
+                                Self::ParseError>;
 
     fn push(&mut self, t: Self::InType);
 }
@@ -53,8 +81,9 @@ pub trait Parse {
 impl Parse for Parser {
     type InType = Token;
     type OutType = Token;
+    type ParseError = ParserError;
 
-    fn parse<S, T>(&mut self, esil: S) -> Option<Self::OutType>
+    fn parse<S, T>(&mut self, esil: S) -> Result<Option<Self::OutType>, Self::ParseError>
         where S: AsRef<str>,
               T: Tokenize<Token = Self::InType>
     {
@@ -109,7 +138,7 @@ impl Parse for Parser {
                     // _Maintains_ order.
                     let len = self.stack.len();
                     if *n > len {
-                        panic!("Request to `PCopy` too many elements!");
+                        return Err(ParserError::TooMany(Token::PCopy(*n)));
                     }
                     self.tstack.extend((&self.stack[len - n..]).iter().cloned());
                 }
@@ -118,20 +147,23 @@ impl Parse for Parser {
                     // _Maintains_ order
                     let len = self.tstack.len();
                     if *n > len {
-                        panic!("Request to `PPop` too many elements!");
+                        return Err(ParserError::TooMany(Token::PPop(*n)));
                     }
                     self.stack.extend((&self.tstack[len - n..]).iter().cloned());
                     self.tstack.truncate(len - n);
                 }
                 // Not in use _yet_.
-                Token::PSync => unimplemented!(),
+                Token::PSync => return Err(ParserError::Unimplemented),
                 Token::EPop => {
                     if self.stack.pop().is_none() {
-                        panic!("Invalid ESIL pop!");
+                        return Err(ParserError::InvalidPop);
                     }
                 }
                 Token::EDup => {
-                    let top = self.stack.last().cloned().unwrap();
+                    let top = match self.stack.last().cloned() {
+                        Some(top) => top,
+                        None => return Err(ParserError::InvalidDup),
+                    };
                     self.push(top);
                 }
                 // Invalid. Let the Evaluator decide what to do with it.
@@ -142,31 +174,37 @@ impl Parse for Parser {
                     } else {
                         self.skip_esil_set -= 1;
                     }
-                    return Some(token);
+                    return Ok(Some(token));
                 }
             }
         }
         // This means that the parser is empty and there are no more tokens
         // to be processed. So we set tokens to None and return None.
         self.tokens = None;
-        None
+        Ok(None)
     }
 
     fn push(&mut self, t: Self::InType) {
         self.stack.push(t);
     }
 
-    fn fetch_operands(&mut self, t: &Token) -> (Option<Token>, Option<Token>) {
+    fn fetch_operands(&mut self, t: &Token) -> Result<(Option<Token>, Option<Token>), Self::ParseError> {
         let result = if t.is_binary() {
-            (self.pop_op(), self.pop_op())
+            match (self.pop_op(), self.pop_op()) {
+                (Ok(lhs), Ok(rhs)) => (lhs, rhs),
+                (Err(e), _) | (_, Err(e)) => return Err(e),
+            }
         } else if t.is_unary() {
-            (self.pop_op(), None)
+            match self.pop_op() {
+                Ok(op) => (op, None),
+                Err(e) => return Err(e),
+            }
         } else if t.is_arity_zero() || t.is_meta() {
             (None, None)
         } else if !t.is_implemented() {
-            unimplemented!();
+            return Err(ParserError::Unimplemented);
         } else {
-            panic!("Invalid esil opcode!");
+            return Err(ParserError::InvalidOpcode);
         };
 
         if self.skip_esil_set == 0 {
@@ -198,7 +236,7 @@ impl Parse for Parser {
             }
         }
 
-        result
+        Ok(result)
     }
 }
 
@@ -341,11 +379,11 @@ impl Parser {
         result
     }
 
-    fn pop_op(&mut self) -> Option<Token> {
+    fn pop_op(&mut self) -> Result<Option<Token>, ParserError> {
         if self.stack.len() > 0 {
-            self.stack.pop()
+            Ok(self.stack.pop())
         } else {
-            panic!("Insufficient operands!");
+            Err(ParserError::InsufficientOperands)
         }
     }
 }
@@ -374,17 +412,25 @@ mod test {
             }
         }
 
-        pub fn run<T: AsRef<str>>(esil: T, parser: Option<&mut Parser>) -> String {
+        pub fn run<T: AsRef<str>>(esil: T, parser: Option<&mut Parser>) -> Result<String, ParserError> {
             let mut pp = Parser::init(None, None);
             let p = parser.unwrap_or(&mut pp);
             p.lastsz = Some(Token::EConstant(64));
             let mut expression = String::new();
-            while let Some(ref token) = p.parse::<_, Tokenizer>(&esil) {
-                let (lhs, rhs) = p.fetch_operands(token);
-                let lhs = ExpressionConstructor::get_inner_or_null(lhs);
-                let rhs = ExpressionConstructor::get_inner_or_null(rhs);
-                expression = format!("({:?}  {}, {})", token, lhs, rhs);
-                p.push(Token::EIdentifier(expression.clone()));
+            loop {
+                match p.parse::<_, Tokenizer>(&esil) {
+                    Ok(Some(ref token)) => match p.fetch_operands(token) {
+                        Ok((lhs, rhs)) => {
+                            let lhs = ExpressionConstructor::get_inner_or_null(lhs);
+                            let rhs = ExpressionConstructor::get_inner_or_null(rhs);
+                            expression = format!("({:?}  {}, {})", token, lhs, rhs);
+                            p.push(Token::EIdentifier(expression.clone()));
+                        },
+                        Err(e) => return Err(e),
+                    },
+                    Ok(None) => break,
+                    Err(e) => return Err(e),
+                }
             }
 
             expression.clear();
@@ -393,7 +439,7 @@ mod test {
                     expression.push_str(s);
                 }
             }
-            expression
+            Ok(expression)
         }
     }
 
@@ -415,7 +461,7 @@ mod test {
 
     macro_rules! construct {
         ($s: expr) => {
-            ExpressionConstructor::run($s, None)
+            ExpressionConstructor::run($s, None).unwrap()
         }
     }
 
@@ -486,7 +532,7 @@ mod test {
     fn parser_test_esil_vars() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let expr = ExpressionConstructor::run("rbx,rax,+=,$0,cf,=", Some(&mut parser));
+        let expr = ExpressionConstructor::run("rbx,rax,+=,$0,cf,=", Some(&mut parser)).unwrap();
         assert_eq!(parser.eold, Some(Token::EIdentifier("rax".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rbx".to_owned())));
         assert_eq!(parser.ecur,
@@ -500,7 +546,7 @@ mod test {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr = ExpressionConstructor::run("rbx,rax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c63,cf,=,$p,pf,=",
-                                              Some(&mut parser));
+                                              Some(&mut parser)).unwrap();
 
         let expected = "(EEq  rax, (EAdd  rax, rbx))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  rax, -), rbx), (EXor  (EAdd  rax, rbx), rax)), 0x3F), 0x1), 0x1))\
@@ -517,7 +563,7 @@ mod test {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr = ExpressionConstructor::run("ebx,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
-                                              Some(&mut parser));
+                                              Some(&mut parser)).unwrap();
 
         let expected = "(EEq  eax, (EAdd  eax, ebx))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), ebx), (EXor  (EAdd  eax, ebx), eax)), 0x1F), 0x1), 0x1))\
@@ -535,7 +581,7 @@ mod test {
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr =
             ExpressionConstructor::run("0,rax,rax,&,==,$0,of,=,$s,sf,=,$z,zf,=,$0,cf,=,$p,pf,=",
-                                       Some(&mut parser));
+                                       Some(&mut parser)).unwrap();
 
         let expected = "(ECmp  (EAnd  rax, rax), 0x0)\
         (EEq  of, 0x0)\
@@ -551,7 +597,7 @@ mod test {
     fn parser_lt_gt() {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
-        let _expr = ExpressionConstructor::run("rax,rbx,<", Some(&mut parser));
+        let _expr = ExpressionConstructor::run("rax,rbx,<", Some(&mut parser)).unwrap();
 
         assert_eq!(parser.eold, Some(Token::EIdentifier("rbx".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rax".to_owned())));
@@ -559,7 +605,7 @@ mod test {
                    Some(Token::EIdentifier("(ELt  rbx, rax)".to_owned())));
         assert_eq!(parser.lastsz, Some(Token::EConstant(64)));
 
-        let _expr = ExpressionConstructor::run("rbx,rax,>", Some(&mut parser));
+        let _expr = ExpressionConstructor::run("rbx,rax,>", Some(&mut parser)).unwrap();
 
         assert_eq!(parser.eold, Some(Token::EIdentifier("rax".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rbx".to_owned())));
@@ -574,7 +620,7 @@ mod test {
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr =
             ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
-                                       Some(&mut parser));
+                                       Some(&mut parser)).unwrap();
 
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
@@ -591,7 +637,7 @@ mod test {
         let regset = sample_regset();
         let mut parser = Parser::init(Some(regset), Some(64));
         let expr = ExpressionConstructor::run("cf,eax,+,eax,+=,$o,of,=,$s,sf,=,$z,zf,=,$c31,cf,=,$p,pf,=",
-                                       Some(&mut parser));
+                                              Some(&mut parser)).unwrap();
 
         let expected = "(EEq  eax, (EAdd  eax, (EAdd  eax, cf)))\
                         (EEq  of, (ECmp  (EAnd  (ELsr  (EAnd  (EXor  (ENeg  eax, -), (EAdd  eax, cf)), (EXor  (EAdd  eax, (EAdd  eax, cf)), eax)), 0x1F), 0x1), 0x1))\
@@ -603,7 +649,7 @@ mod test {
         assert_eq!(expected, &expr);
         assert_eq!(parser.skip_esil_set, 1);
 
-        let _ = ExpressionConstructor::run("rax,rbx,-=,$0,cf,=", Some(&mut parser));
+        let _ = ExpressionConstructor::run("rax,rbx,-=,$0,cf,=", Some(&mut parser)).unwrap();
         assert_eq!(parser.eold, Some(Token::EIdentifier("rbx".to_owned())));
         assert_eq!(parser.eold_, Some(Token::EIdentifier("rax".to_owned())));
         assert_eq!(parser.ecur, Some(Token::EIdentifier("(ESub  rbx, rax)".to_owned())));

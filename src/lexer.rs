@@ -392,10 +392,10 @@ impl Tokenize for Tokenizer {
                     _   => {
             // Handle internal vars
                         if Some(ESIL_INTERNAL_PREFIX) == t.chars().nth(0) {
-                            let bit = if t.len() < 3 {
+                            let bit = if t.len() < 3 || !t.is_char_boundary(2) {
                                 DEFAULT_SIZE
                             } else {
-                                t[2..].parse::<u8>().unwrap_or(0)
+                                t[2..].parse::<u8>().unwrap_or(DEFAULT_SIZE)
                             };
                             match t.chars().nth(1).unwrap_or('\0') {
                                 '$' => vec![Token::IAddress(bit)],
@@ -437,6 +437,7 @@ impl Tokenize for Tokenizer {
 
 #[cfg(test)]
 mod test {
+    use std::str;
     use super::*;
 
     #[test]
@@ -473,5 +474,10 @@ mod test {
     fn i64_max_int() {
         assert_eq!(Token::EConstant(i64::max_value() as u64),
                    Tokenizer::tokenize(format!("{}", i64::max_value()))[0]);
+    }
+
+    #[test]
+    fn utf8_internal_prefix() {
+        Tokenizer::tokenize(str::from_utf8(&vec![0x24,0xda,0x91]).unwrap());
     }
 }
